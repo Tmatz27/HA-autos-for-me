@@ -1,0 +1,858 @@
+<title>Window Fan Setup</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #f4f6f8;
+    --surface: #ffffff;
+    --surface-2: #eaeef2;
+    --line: #d4dbe3;
+    --line-soft: #e4e9ee;
+    --ink: #172029;
+    --ink-2: #53616f;
+    --ink-3: #7b8896;
+    --accent: #c96a1c;
+    --accent-soft: #f7e3d1;
+    --cool: #2f6fd0;
+    --exhaust: #d2691a;
+    --circ: #8b52c4;
+    --ok: #17803d;
+    --warn: #a4551a;
+    --warn-bg: #fdf0e2;
+    --shadow: 0 1px 2px rgba(23,32,41,.06), 0 8px 24px rgba(23,32,41,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121820;
+      --surface: #1a222c;
+      --surface-2: #222c38;
+      --line: #313e4c;
+      --line-soft: #26313d;
+      --ink: #e7edf3;
+      --ink-2: #a3b1c0;
+      --ink-3: #78889a;
+      --accent: #f2994a;
+      --accent-soft: #3a2a18;
+      --cool: #62a0f0;
+      --exhaust: #f2994a;
+      --circ: #b98ae4;
+      --ok: #4ade80;
+      --warn: #f0b070;
+      --warn-bg: #2e2416;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.28);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #121820;
+    --surface: #1a222c;
+    --surface-2: #222c38;
+    --line: #313e4c;
+    --line-soft: #26313d;
+    --ink: #e7edf3;
+    --ink-2: #a3b1c0;
+    --ink-3: #78889a;
+    --accent: #f2994a;
+    --accent-soft: #3a2a18;
+    --cool: #62a0f0;
+    --exhaust: #f2994a;
+    --circ: #b98ae4;
+    --ok: #4ade80;
+    --warn: #f0b070;
+    --warn-bg: #2e2416;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.28);
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding-inline: 18px; padding-block: 28px 56px; }
+
+  h1, h2, h3 { font-family: Archivo, "IBM Plex Sans", system-ui, sans-serif; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(27px, 4.6vw, 38px); font-weight: 700; letter-spacing: -.018em; line-height: 1.1; }
+  .lede { color: var(--ink-2); max-width: 62ch; margin-top: 10px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--accent); font-weight: 500;
+  }
+
+  header.page { border-bottom: 1px solid var(--line); padding-bottom: 22px; margin-bottom: 26px; }
+
+  .cols { display: grid; grid-template-columns: minmax(0,1fr); gap: 22px; }
+  @media (min-width: 950px) { .cols { grid-template-columns: minmax(0,1.05fr) minmax(0,1fr); gap: 26px; align-items: start; } }
+
+  section.step { margin-bottom: 22px; }
+  .step-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .step-num {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 500;
+    color: var(--accent); border: 1px solid var(--accent); border-radius: 4px;
+    padding: 1px 6px; flex: none;
+  }
+  .step-head h2 { font-size: 19px; font-weight: 600; letter-spacing: -.01em; }
+  .step-note { color: var(--ink-2); font-size: 13.5px; margin: 0 0 14px; max-width: 58ch; }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--line-soft);
+    border-radius: 10px; padding: 16px; box-shadow: var(--shadow);
+  }
+
+  .fields { display: grid; gap: 13px; }
+  @media (min-width: 620px) { .fields.two { grid-template-columns: 1fr 1fr; } }
+  label { display: block; }
+  .lbl { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+  .hint { display: block; font-size: 11.5px; color: var(--ink-3); margin-bottom: 5px; font-weight: 400; }
+  input[type="text"], input[type="number"], input[type="time"] {
+    width: 100%; box-sizing: border-box; padding: 8px 10px;
+    background: var(--paper); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 6px;
+    font-family: "IBM Plex Mono", monospace; font-size: 13px;
+  }
+  input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  input.missing { border-color: var(--warn); background: var(--warn-bg); }
+
+  /* calibration grid */
+  .cal { width: 100%; border-collapse: collapse; }
+  .cal th, .cal td { padding: 6px 5px; text-align: center; }
+  .cal thead th {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ink-3); font-weight: 500;
+  }
+  .cal tbody th {
+    text-align: left; font-size: 13px; font-weight: 600; white-space: nowrap;
+    padding-right: 10px; width: 1%;
+  }
+  .cal tbody th .swatch {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px;
+  }
+  .cal input { text-align: center; padding-inline: 4px; }
+  .derived td {
+    font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--ink-3);
+    background: var(--surface-2); border-radius: 5px;
+  }
+  .derived th { color: var(--ink-2); font-weight: 500; }
+  .cal-foot { font-size: 12px; color: var(--ink-3); margin: 10px 0 0; }
+
+  .plot-wrap { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+  .plot-title {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px;
+  }
+  svg.plot { width: 100%; height: auto; display: block; color: var(--ink-3); }
+
+  .flag {
+    display: flex; gap: 9px; align-items: flex-start; margin-top: 12px;
+    padding: 9px 11px; border-radius: 7px; font-size: 13px; line-height: 1.45;
+  }
+  .flag.warn { background: var(--warn-bg); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
+  .flag.ok { background: color-mix(in srgb, var(--ok) 11%, transparent); color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 28%, transparent); }
+  .flag b { font-weight: 600; }
+
+  /* output */
+  .out { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); }
+  .tabs { display: flex; gap: 4px; margin-bottom: -1px; flex-wrap: wrap; }
+  .tab {
+    font-family: Archivo, sans-serif; font-size: 13px; font-weight: 600;
+    padding: 7px 13px; border: 1px solid var(--line-soft); border-bottom-color: transparent;
+    background: var(--surface-2); color: var(--ink-2);
+    border-radius: 8px 8px 0 0; cursor: pointer;
+  }
+  .tab[aria-selected="true"] { background: var(--surface); color: var(--ink); border-bottom-color: var(--surface); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tabpanel { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 0 10px 10px 10px; box-shadow: var(--shadow); }
+  .tabpanel-head {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    padding: 11px 14px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap;
+  }
+  .tabpanel-head p { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+  .tabpanel-head code { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink); }
+  button.copy {
+    font-family: Archivo, sans-serif; font-size: 12.5px; font-weight: 600;
+    padding: 6px 12px; border-radius: 6px; cursor: pointer;
+    background: var(--accent); color: #fff; border: 1px solid transparent; flex: none;
+  }
+  :root[data-theme="dark"] button.copy, :root:not([data-theme="light"]) button.copy { color: #1b1206; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) button.copy { color: #fff; } }
+  button.copy:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  pre {
+    margin: 0; padding: 13px 14px; overflow: auto; max-height: min(62vh, 640px);
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; line-height: 1.6;
+    color: var(--ink); tab-size: 2;
+  }
+
+  /* checklist */
+  ol.check { list-style: none; margin: 0; padding: 13px 14px; display: grid; gap: 3px; }
+  ol.check li { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
+  ol.check li:last-child { border-bottom: 0; }
+  ol.check input[type="checkbox"] { margin-top: 3px; width: 15px; height: 15px; accent-color: var(--ok); flex: none; cursor: pointer; }
+  ol.check .body { min-width: 0; }
+  ol.check .t { font-size: 13.5px; font-weight: 600; }
+  ol.check .d { font-size: 12.5px; color: var(--ink-2); }
+  ol.check code, .inlinecode {
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+    background: var(--surface-2); padding: 1px 4px; border-radius: 3px; overflow-wrap: anywhere;
+  }
+  ol.check li.done .t { color: var(--ink-3); text-decoration: line-through; }
+  .progress { padding: 11px 14px; border-bottom: 1px solid var(--line-soft); }
+  .bar { height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--ok); width: 0; transition: width .25s ease; }
+  .progress p { margin: 0 0 6px; font-size: 12.5px; color: var(--ink-2); }
+  .progress b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  footer.page { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-3); }
+  a { color: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="page">
+    <div class="eyebrow">Home Assistant &middot; IR window fan</div>
+    <h1>Window Fan Setup</h1>
+    <p class="lede">
+      Fill in your entities and the wattages you measured, and this builds the
+      package file and card config for you. Nothing here needs to be created by
+      hand &mdash; the generated package makes every helper, sensor, script and
+      automation itself.
+    </p>
+  </header>
+
+  <div class="cols">
+    <div>
+      <section class="step">
+        <div class="step-head"><span class="step-num">01</span><h2>Your entities</h2></div>
+        <p class="step-note">Copy these from Developer Tools &rarr; States. The first four are required.</p>
+        <div class="panel fields two">
+          <label><span class="lbl">Plug power sensor <span class="hint">Watts. The whole system reads state from this.</span></span>
+            <input type="text" id="f_power" data-req="1" value="sensor.master_smart_plug_power"></label>
+          <label><span class="lbl">Plug switch <span class="hint">Used for deterministic power on/off.</span></span>
+            <input type="text" id="f_switch" data-req="1" value="switch.master_fan_plug"></label>
+          <label><span class="lbl">IR remote <span class="hint">Your Broadlink or similar.</span></span>
+            <input type="text" id="f_remote" data-req="1" value="remote.master_remote"></label>
+          <label><span class="lbl">IR device name <span class="hint">Exactly as typed when learning codes.</span></span>
+            <input type="text" id="f_device" data-req="1" value="Master Fan"></label>
+          <label><span class="lbl">Mode toggle command</span>
+            <input type="text" id="f_modecmd" value="mode_toggle"></label>
+          <label><span class="lbl">Speed toggle command</span>
+            <input type="text" id="f_speedcmd" value="speed_toggle"></label>
+          <label><span class="lbl">Room temperature</span>
+            <input type="text" id="f_temp" value="sensor.master_air_quality_temperature"></label>
+          <label><span class="lbl">Room humidity</span>
+            <input type="text" id="f_hum" value="sensor.master_air_quality_humidity"></label>
+          <label><span class="lbl">Outdoor humidity <span class="hint">Ends the night phase when it drops.</span></span>
+            <input type="text" id="f_outhum" value="sensor.aso_vandenberg_humidity"></label>
+          <label><span class="lbl">Bedtime trigger <span class="hint">TV going unavailable means lights out.</span></span>
+            <input type="text" id="f_tv" value="media_player.lg_webos_tv_oled65c2pua"></label>
+          <label><span class="lbl">Name prefix <span class="hint">Used for every entity this creates.</span></span>
+            <input type="text" id="f_slug" value="bedroom_fan"></label>
+          <label><span class="lbl">Card title</span>
+            <input type="text" id="f_title" value="Bedroom Fan"></label>
+        </div>
+      </section>
+
+      <section class="step">
+        <div class="step-head"><span class="step-num">02</span><h2>Calibration</h2></div>
+        <p class="step-note">
+          Step the fan through each combination and note what the plug reads. This
+          is what lets a remote with no feedback be tracked exactly.
+        </p>
+        <div class="panel">
+          <table class="cal">
+            <thead>
+              <tr><th></th><th scope="col">Low</th><th scope="col">Med</th><th scope="col">High</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row"><span class="swatch" style="background:var(--cool)"></span>Cool</th>
+                <td><input type="number" step="0.1" id="w_cool_low" value="45"></td>
+                <td><input type="number" step="0.1" id="w_cool_med" value="48"></td>
+                <td><input type="number" step="0.1" id="w_cool_high" value="51"></td>
+              </tr>
+              <tr>
+                <th scope="row"><span class="swatch" style="background:var(--exhaust)"></span>Exhaust</th>
+                <td><input type="number" step="0.1" id="w_exhaust_low" value="31"></td>
+                <td><input type="number" step="0.1" id="w_exhaust_med" value="33"></td>
+                <td><input type="number" step="0.1" id="w_exhaust_high" value="36"></td>
+              </tr>
+              <tr class="derived">
+                <th scope="row"><span class="swatch" style="background:var(--circ)"></span>Circulate</th>
+                <td id="d_low">&mdash;</td><td id="d_med">&mdash;</td><td id="d_high">&mdash;</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="cal-foot">
+            Circulate runs one fan each way, so it's derived as the average &mdash;
+            no need to measure it. <label style="display:inline">Off below
+            <input type="number" step="0.1" id="w_off" value="10" style="width:64px; display:inline-block"> W</label>
+          </p>
+
+          <div class="plot-wrap">
+            <div class="plot-title">Where each state lands</div>
+            <svg class="plot" id="plot" viewBox="0 0 600 190" role="img" aria-label="Measured wattage for each fan state"></svg>
+            <div id="collide"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="step">
+        <div class="step-head"><span class="step-num">03</span><h2>Comfort thresholds</h2></div>
+        <p class="step-note">What the automations aim for. Defaults are tuned for a humid coastal bedroom.</p>
+        <div class="panel fields two">
+          <label><span class="lbl">Night: exhaust below this temp <span class="hint">Only dehumidify once the room is already cool.</span></span>
+            <input type="number" step="0.5" id="t_n_temp_lo" value="62"></label>
+          <label><span class="lbl">Night: exhaust above this humidity</span>
+            <input type="number" step="1" id="t_n_hum_hi" value="75"></label>
+          <label><span class="lbl">Night: back to cool at this temp <span class="hint">Sleeping comfort outranks humidity.</span></span>
+            <input type="number" step="0.5" id="t_n_temp_hi" value="65"></label>
+          <label><span class="lbl">Night: back to cool at this humidity</span>
+            <input type="number" step="1" id="t_n_hum_lo" value="60"></label>
+          <label><span class="lbl">Day: exhaust above this humidity</span>
+            <input type="number" step="1" id="t_d_hum_hi" value="68"></label>
+          <label><span class="lbl">Day: back to cool at this humidity</span>
+            <input type="number" step="1" id="t_d_hum_lo" value="60"></label>
+          <label><span class="lbl">Day: never exceed this temp</span>
+            <input type="number" step="0.5" id="t_d_temp_hi" value="75"></label>
+          <label><span class="lbl">Minutes between switches <span class="hint">The fan beeps on every press.</span></span>
+            <input type="number" step="1" id="t_dwell" value="30"></label>
+          <label><span class="lbl">Morning: outdoor humidity below</span>
+            <input type="number" step="1" id="t_out_hum" value="75"></label>
+          <label><span class="lbl">Morning: backstop time</span>
+            <input type="time" id="t_out_time" value="10:00"></label>
+        </div>
+      </section>
+    </div>
+
+    <div class="out">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" id="tab-check" aria-selected="true" aria-controls="p-check">Checklist</button>
+        <button class="tab" role="tab" id="tab-pkg" aria-selected="false" aria-controls="p-pkg">Package YAML</button>
+        <button class="tab" role="tab" id="tab-card" aria-selected="false" aria-controls="p-card">Card config</button>
+      </div>
+
+      <div class="tabpanel" id="p-check" role="tabpanel" aria-labelledby="tab-check">
+        <div class="progress">
+          <p><b id="pdone">0</b> of <b id="ptotal">7</b> steps done</p>
+          <div class="bar"><i id="pbar"></i></div>
+        </div>
+        <ol class="check" id="checklist"></ol>
+      </div>
+
+      <div class="tabpanel" id="p-pkg" role="tabpanel" aria-labelledby="tab-pkg" hidden>
+        <div class="tabpanel-head">
+          <p>Save as <code id="pkgpath">packages/window_fan_bedroom.yaml</code></p>
+          <button class="copy" data-target="yaml-pkg">Copy</button>
+        </div>
+        <pre id="yaml-pkg"></pre>
+      </div>
+
+      <div class="tabpanel" id="p-card" role="tabpanel" aria-labelledby="tab-card" hidden>
+        <div class="tabpanel-head">
+          <p>Paste into the card's <code>Show code editor</code></p>
+          <button class="copy" data-target="yaml-card">Copy</button>
+        </div>
+        <pre id="yaml-card"></pre>
+      </div>
+    </div>
+  </div>
+
+  <footer class="page">
+    Generated config for <span class="inlinecode">Tmatz27/HA-autos-for-me</span>.
+    The card alone needs none of the package &mdash; install it and skip straight
+    to step 02 if you only want manual control.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var MODES = ["cool", "exhaust", "circulate"], SPEEDS = ["low", "med", "high"];
+  var $ = function (id) { return document.getElementById(id); };
+  var val = function (id) { return ($(id).value || "").trim(); };
+  var num = function (id) { return parseFloat($(id).value); };
+
+  function store(key, fallback) {
+    try { var v = localStorage.getItem(key); return v === null ? fallback : v; }
+    catch (e) { return fallback; }
+  }
+  function save(key, v) { try { localStorage.setItem(key, v); } catch (e) {} }
+
+  /* ---------- model ---------- */
+  function watts() {
+    var w = { off: num("w_off") };
+    ["cool", "exhaust"].forEach(function (m) {
+      SPEEDS.forEach(function (s) { w[m + "_" + s] = num("w_" + m + "_" + s); });
+    });
+    SPEEDS.forEach(function (s) { w["circulate_" + s] = (w["cool_" + s] + w["exhaust_" + s]) / 2; });
+    return w;
+  }
+
+  /* Sorted states with the decode boundaries that separate them: each cut sits
+     at the midpoint between neighbouring readings. */
+  function bands() {
+    var w = watts(), rows = [];
+    MODES.forEach(function (m) {
+      SPEEDS.forEach(function (s) { rows.push({ key: m + "_" + s, mode: m, speed: s, w: w[m + "_" + s] }); });
+    });
+    rows = rows.filter(function (r) { return isFinite(r.w); })
+               .sort(function (a, b) { return a.w - b.w; });
+    rows.forEach(function (r, i) {
+      r.upper = i === rows.length - 1 ? null : (r.w + rows[i + 1].w) / 2;
+    });
+    return rows;
+  }
+
+  function collisions() {
+    var rows = bands(), out = [];
+    for (var i = 0; i < rows.length - 1; i++) {
+      var gap = rows[i + 1].w - rows[i].w;
+      if (gap < 1.5) out.push({ a: rows[i], b: rows[i + 1], gap: gap });
+    }
+    return out;
+  }
+
+  /* ---------- plot ---------- */
+  var MODE_COLOR = { cool: "var(--cool)", exhaust: "var(--exhaust)", circulate: "var(--circ)" };
+  var DOT = { low: 4, med: 5.5, high: 7 };
+
+  function drawPlot() {
+    var rows = bands(), svg = $("plot");
+    if (!rows.length) { svg.innerHTML = ""; return; }
+    var W = 600, padL = 78, padR = 26, top = 16, rowH = 42;
+    var lo = rows[0].w, hi = rows[rows.length - 1].w, span = (hi - lo) || 1;
+    var min = lo - span * 0.12, max = hi + span * 0.12;
+    var x = function (v) { return padL + (v - min) / (max - min) * (W - padL - padR); };
+    var offW = num("w_off");
+    var parts = [];
+
+    MODES.forEach(function (mode, mi) {
+      var y = top + 18 + mi * rowH;
+      var mine = rows.filter(function (r) { return r.mode === mode; });
+      if (!mine.length) return;
+      parts.push('<text x="' + (padL - 12) + '" y="' + (y + 4) + '" text-anchor="end" font-size="12" ' +
+        'font-family="IBM Plex Sans, sans-serif" fill="' + MODE_COLOR[mode] + '" font-weight="600">' +
+        mode.charAt(0).toUpperCase() + mode.slice(1) + '</text>');
+      parts.push('<line x1="' + x(mine[0].w) + '" y1="' + y + '" x2="' + x(mine[mine.length - 1].w) +
+        '" y2="' + y + '" stroke="' + MODE_COLOR[mode] + '" stroke-opacity=".35" stroke-width="2"/>');
+      mine.forEach(function (r) {
+        parts.push('<circle cx="' + x(r.w) + '" cy="' + y + '" r="' + DOT[r.speed] + '" fill="' + MODE_COLOR[mode] + '"/>');
+        parts.push('<text x="' + x(r.w) + '" y="' + (y - 12) + '" text-anchor="middle" font-size="10.5" ' +
+          'font-family="IBM Plex Mono, monospace" fill="currentColor">' + (Math.round(r.w * 10) / 10) + '</text>');
+      });
+    });
+
+    var axisY = top + 18 + 3 * rowH - 6;
+    parts.push('<line x1="' + padL + '" y1="' + axisY + '" x2="' + (W - padR) + '" y2="' + axisY +
+      '" stroke="currentColor" stroke-opacity=".3"/>');
+    [min, (min + max) / 2, max].forEach(function (t) {
+      parts.push('<text x="' + x(t) + '" y="' + (axisY + 15) + '" text-anchor="middle" font-size="10" ' +
+        'font-family="IBM Plex Mono, monospace" fill="currentColor">' + Math.round(t) + 'W</text>');
+    });
+    if (isFinite(offW) && offW > min) {
+      parts.push('<line x1="' + x(offW) + '" y1="' + top + '" x2="' + x(offW) + '" y2="' + axisY +
+        '" stroke="currentColor" stroke-dasharray="3 3" stroke-opacity=".5"/>');
+    }
+    parts.push('<text x="' + padL + '" y="' + (axisY + 32) + '" font-size="10.5" ' +
+      'font-family="IBM Plex Sans, sans-serif" fill="currentColor">Dot size = speed (low &rarr; high)</text>');
+    svg.setAttribute("viewBox", "0 0 " + W + " " + (axisY + 42));
+    svg.innerHTML = parts.join("");
+
+    var cols = collisions(), box = $("collide");
+    if (cols.length) {
+      box.innerHTML = '<div class="flag warn"><span>&#9888;</span><span><b>Too close to tell apart.</b> ' +
+        cols.map(function (c) {
+          return c.a.key.replace("_", " ") + " and " + c.b.key.replace("_", " ") +
+            " are " + (Math.round(c.gap * 10) / 10) + "W apart";
+        }).join("; ") + '. Re-measure these, or expect them to be misread.</span></div>';
+    } else {
+      box.innerHTML = '<div class="flag ok"><span>&#10003;</span><span><b>All nine states are distinguishable.</b> ' +
+        'Every reading is far enough from its neighbours to decode reliably.</span></div>';
+    }
+  }
+
+  /* ---------- yaml ---------- */
+  function decodeTemplate(slug) {
+    var rows = bands(), power = val("f_power"), lines = [];
+    lines.push("          {% set w = states('" + power + "') | float(0) %}");
+    lines.push("          {% if w < " + num("w_off") + " %}off");
+    rows.forEach(function (r) {
+      if (r.upper === null) lines.push("          {% else %}" + r.key);
+      else lines.push("          {% elif w < " + (Math.round(r.upper * 100) / 100) + " %}" + r.key);
+    });
+    lines.push("          {% endif %}");
+    return lines.join("\n");
+  }
+
+  function dwellCondition(slug) {
+    var ent = "input_datetime." + slug + "_last_command_time";
+    var secs = Math.round(num("t_dwell") * 60);
+    return "        value_template: >-\n" +
+      "          {{ states('" + ent + "') in ['unknown', 'unavailable']\n" +
+      "             or (now() - (states('" + ent + "') | as_datetime)).total_seconds() >= " + secs + " }}";
+  }
+
+  function cycleActions(slug, toExhaust, toCool) {
+    return [
+      "    actions:",
+      "      - variables:",
+      "          temp: \"{{ states('" + val("f_temp") + "') | float(99) }}\"",
+      "          humidity: \"{{ states('" + val("f_hum") + "') | float(0) }}\"",
+      "          fan_state: \"{{ states('sensor." + slug + "_state') }}\"",
+      "      - choose:",
+      "          - conditions:",
+      "              - condition: template",
+      "                value_template: \"" + toExhaust + "\"",
+      "            sequence:",
+      "              - action: script." + slug + "_set_state",
+      "                data:",
+      "                  target_function: exhaust",
+      "                  target_speed: high",
+      "          - conditions:",
+      "              - condition: template",
+      "                value_template: \"" + toCool + "\"",
+      "            sequence:",
+      "              - action: script." + slug + "_set_state",
+      "                data:",
+      "                  target_function: cool",
+      "                  target_speed: high"
+    ].join("\n");
+  }
+
+  function buildPackage() {
+    var slug = val("f_slug") || "window_fan";
+    var title = val("f_title") || "Window Fan";
+    var t = function (id) { return num(id); };
+
+    return [
+      "# " + "=".repeat(75),
+      "# " + title + " - generated package",
+      "# " + "=".repeat(75),
+      "# Save to config/packages/ and make sure configuration.yaml has:",
+      "#",
+      "#   homeassistant:",
+      "#     packages: !include_dir_named packages",
+      "#",
+      "# Then restart Home Assistant. Every helper, sensor, script and automation",
+      "# below is created for you - there is nothing to make by hand.",
+      "# " + "=".repeat(75),
+      "",
+      "input_boolean:",
+      "  " + slug + "_night_phase:",
+      "    name: " + title + " Night Phase",
+      "    icon: mdi:weather-night",
+      "  " + slug + "_manual_override:",
+      "    name: " + title + " Manual Override",
+      "    icon: mdi:hand-back-right",
+      "",
+      "input_datetime:",
+      "  " + slug + "_last_command_time:",
+      "    name: " + title + " Last Command Time",
+      "    has_date: true",
+      "    has_time: true",
+      "",
+      "# Each mode/speed draws a distinct amount of power, so the plug tells us",
+      "# exactly where the fan is. Cut points are midway between your readings.",
+      "template:",
+      "  - sensor:",
+      "      - name: \"" + title + " State\"",
+      "        unique_id: " + slug + "_state",
+      "        icon: mdi:fan",
+      "        state: >",
+      decodeTemplate(slug),
+      "",
+      "# The only thing that touches the remote. Both buttons only cycle forward,",
+      "# so this counts steps around each loop from wherever the fan is now.",
+      "script:",
+      "  " + slug + "_set_state:",
+      "    alias: " + title + " - Set State",
+      "    mode: queued",
+      "    fields:",
+      "      target_function:",
+      "        name: Target Function",
+      "        selector:",
+      "          select:",
+      "            options: [\"cool\", \"exhaust\", \"circulate\"]",
+      "      target_speed:",
+      "        name: Target Speed",
+      "        selector:",
+      "          select:",
+      "            options: [\"low\", \"med\", \"high\"]",
+      "    sequence:",
+      "      - if:",
+      "          - condition: state",
+      "            entity_id: sensor." + slug + "_state",
+      "            state: \"off\"",
+      "        then:",
+      "          - action: switch.turn_on",
+      "            target:",
+      "              entity_id: " + val("f_switch"),
+      "          - wait_template: \"{{ states('sensor." + slug + "_state') != 'off' }}\"",
+      "            timeout: \"00:00:15\"",
+      "          - delay: \"00:00:01\"",
+      "      - variables:",
+      "          state_now: \"{{ states('sensor." + slug + "_state') }}\"",
+      "          current_function: >",
+      "            {% if 'exhaust' in state_now %}exhaust",
+      "            {% elif 'cool' in state_now %}cool",
+      "            {% else %}circulate",
+      "            {% endif %}",
+      "          current_speed: >",
+      "            {% if 'low' in state_now %}low",
+      "            {% elif 'med' in state_now %}med",
+      "            {% else %}high",
+      "            {% endif %}",
+      "          function_order: [\"cool\", \"exhaust\", \"circulate\"]",
+      "          speed_order: [\"low\", \"med\", \"high\"]",
+      "          function_presses: >",
+      "            {{ (function_order.index(target_function) - function_order.index(current_function)) % 3 }}",
+      "          speed_presses: >",
+      "            {{ (speed_order.index(target_speed) - speed_order.index(current_speed)) % 3 }}",
+      "      - repeat:",
+      "          count: \"{{ function_presses | int }}\"",
+      "          sequence:",
+      "            - action: remote.send_command",
+      "              target:",
+      "                entity_id: " + val("f_remote"),
+      "              data:",
+      "                device: " + val("f_device"),
+      "                command: " + val("f_modecmd"),
+      "            - delay: \"00:00:02\"",
+      "      - repeat:",
+      "          count: \"{{ speed_presses | int }}\"",
+      "          sequence:",
+      "            - action: remote.send_command",
+      "              target:",
+      "                entity_id: " + val("f_remote"),
+      "              data:",
+      "                device: " + val("f_device"),
+      "                command: " + val("f_speedcmd"),
+      "            - delay: \"00:00:02\"",
+      "      - action: input_datetime.set_datetime",
+      "        target:",
+      "          entity_id: input_datetime." + slug + "_last_command_time",
+      "        data:",
+      "          timestamp: \"{{ now().timestamp() }}\"",
+      "",
+      "automation:",
+      "  # Bedtime. The TV dropping off means we're heading up.",
+      "  - alias: " + title + " - Bedtime Kickoff",
+      "    id: " + slug + "_bedtime_kickoff",
+      "    mode: restart",
+      "    triggers:",
+      "      - trigger: state",
+      "        entity_id: " + val("f_tv"),
+      "        to: \"unavailable\"",
+      "        for:",
+      "          seconds: 10",
+      "    conditions:",
+      "      - condition: time",
+      "        after: \"20:00:00\"",
+      "        before: \"23:59:59\"",
+      "    actions:",
+      "      - action: input_boolean.turn_on",
+      "        target:",
+      "          entity_id: input_boolean." + slug + "_night_phase",
+      "      - action: input_boolean.turn_off",
+      "        target:",
+      "          entity_id: input_boolean." + slug + "_manual_override",
+      "      - action: script." + slug + "_set_state",
+      "        data:",
+      "          target_function: cool",
+      "          target_speed: high",
+      "",
+      "  # Overnight. Dehumidify only while the room is genuinely cool; the",
+      "  # moment it warms up, comfort wins.",
+      "  - alias: " + title + " - Night Humidity Cycle",
+      "    id: " + slug + "_night_cycle",
+      "    mode: single",
+      "    triggers:",
+      "      - trigger: state",
+      "        entity_id: " + val("f_temp"),
+      "      - trigger: state",
+      "        entity_id: " + val("f_hum"),
+      "    conditions:",
+      "      - condition: state",
+      "        entity_id: input_boolean." + slug + "_night_phase",
+      "        state: \"on\"",
+      "      - condition: state",
+      "        entity_id: input_boolean." + slug + "_manual_override",
+      "        state: \"off\"",
+      "      - condition: template",
+      dwellCondition(slug),
+      cycleActions(slug,
+        "{{ 'cool' in fan_state and temp <= " + t("t_n_temp_lo") + " and humidity >= " + t("t_n_hum_hi") + " }}",
+        "{{ 'exhaust' in fan_state and (temp >= " + t("t_n_temp_hi") + " or humidity <= " + t("t_n_hum_lo") + ") }}"),
+      "",
+      "  # Morning. Outdoor humidity often doesn't break until late, so the",
+      "  # clock is a backstop rather than the main trigger.",
+      "  - alias: " + title + " - Morning Reset",
+      "    id: " + slug + "_morning_reset",
+      "    mode: single",
+      "    triggers:",
+      "      - trigger: numeric_state",
+      "        entity_id: " + val("f_outhum"),
+      "        below: " + t("t_out_hum"),
+      "      - trigger: time",
+      "        at: \"" + (val("t_out_time") || "10:00") + ":00\"",
+      "    conditions:",
+      "      - condition: state",
+      "        entity_id: input_boolean." + slug + "_night_phase",
+      "        state: \"on\"",
+      "    actions:",
+      "      - action: script." + slug + "_set_state",
+      "        data:",
+      "          target_function: cool",
+      "          target_speed: high",
+      "      - action: input_boolean.turn_off",
+      "        target:",
+      "          entity_id: input_boolean." + slug + "_night_phase",
+      "",
+      "  # Daytime. Humidity first, but never let the room get hot enough that",
+      "  # we're fighting it again at bedtime.",
+      "  - alias: " + title + " - Daytime Humidity Cycle",
+      "    id: " + slug + "_day_cycle",
+      "    mode: single",
+      "    triggers:",
+      "      - trigger: state",
+      "        entity_id: " + val("f_hum"),
+      "      - trigger: state",
+      "        entity_id: " + val("f_temp"),
+      "    conditions:",
+      "      - condition: state",
+      "        entity_id: input_boolean." + slug + "_night_phase",
+      "        state: \"off\"",
+      "      - condition: state",
+      "        entity_id: input_boolean." + slug + "_manual_override",
+      "        state: \"off\"",
+      "      - condition: template",
+      dwellCondition(slug),
+      cycleActions(slug,
+        "{{ 'cool' in fan_state and humidity >= " + t("t_d_hum_hi") + " }}",
+        "{{ 'exhaust' in fan_state and (humidity <= " + t("t_d_hum_lo") + " or temp >= " + t("t_d_temp_hi") + ") }}")
+    ].join("\n");
+  }
+
+  function buildCard() {
+    var slug = val("f_slug") || "window_fan", w = watts();
+    var lines = [
+      "type: custom:window-fan-card",
+      "name: " + (val("f_title") || "Window Fan"),
+      "power_sensor: " + val("f_power"),
+      "power_switch: " + val("f_switch"),
+      "remote: " + val("f_remote"),
+      "ir_device: " + val("f_device"),
+      "mode_command: " + val("f_modecmd"),
+      "speed_command: " + val("f_speedcmd"),
+      "press_delay: 2"
+    ];
+    if (val("f_temp")) lines.push("temperature_sensor: " + val("f_temp"));
+    if (val("f_hum")) lines.push("humidity_sensor: " + val("f_hum"));
+    lines.push("override_boolean: input_boolean." + slug + "_manual_override");
+    lines.push("watts:");
+    lines.push("  off_below: " + w.off);
+    ["exhaust", "cool"].forEach(function (m) {
+      SPEEDS.forEach(function (s) { lines.push("  " + m + "_" + s + ": " + w[m + "_" + s]); });
+    });
+    return lines.join("\n");
+  }
+
+  /* ---------- checklist ---------- */
+  var STEPS = [
+    { id: "hacs", t: "Install the card through HACS",
+      d: "HACS &rarr; Custom repositories &rarr; add the repo as type <code>Dashboard</code>, then download <b>Window Fan Card</b> and hard-refresh." },
+    { id: "measure", t: "Measure your six wattages",
+      d: "Step the fan through cool and exhaust at each speed, noting the plug reading. Enter them in step 02 above." },
+    { id: "addcard", t: "Add the card to a dashboard",
+      d: "Add Card &rarr; search <b>Window Fan</b>. Fill it in with dropdowns, or paste the generated Card config." },
+    { id: "testcard", t: "Test every button",
+      d: "Tap each mode and speed. The lights should follow the fan within a few seconds. If one is misread, re-measure that wattage." },
+    { id: "pkgdir", t: "Enable packages",
+      d: "Add <code>homeassistant:</code> &rarr; <code>packages: !include_dir_named packages</code> to configuration.yaml if it isn't there." },
+    { id: "pkgfile", t: "Save the generated package",
+      d: "Drop the Package YAML into <code>config/packages/</code> and restart. This creates all helpers, the sensor, the script and four automations." },
+    { id: "override", t: "Link the override helper",
+      d: "Point the card's override field at the helper the package made, so manual choices aren't reverted 30 minutes later." }
+  ];
+
+  function renderChecklist() {
+    var ol = $("checklist");
+    ol.innerHTML = STEPS.map(function (s) {
+      var on = store("wfs_" + s.id, "0") === "1";
+      return '<li class="' + (on ? "done" : "") + '" data-id="' + s.id + '">' +
+        '<input type="checkbox" id="chk_' + s.id + '"' + (on ? " checked" : "") + '>' +
+        '<span class="body"><label class="t" for="chk_' + s.id + '">' + s.t + '</label>' +
+        '<span class="d">' + s.d + '</span></span></li>';
+    }).join("");
+    updateProgress();
+  }
+  function updateProgress() {
+    var done = STEPS.filter(function (s) { return store("wfs_" + s.id, "0") === "1"; }).length;
+    $("pdone").textContent = done;
+    $("ptotal").textContent = STEPS.length;
+    $("pbar").style.width = (done / STEPS.length * 100) + "%";
+  }
+  $("checklist").addEventListener("change", function (e) {
+    if (e.target.type !== "checkbox") return;
+    var li = e.target.closest("li");
+    save("wfs_" + li.dataset.id, e.target.checked ? "1" : "0");
+    li.classList.toggle("done", e.target.checked);
+    updateProgress();
+  });
+
+  /* ---------- tabs ---------- */
+  var TABS = [["tab-check", "p-check"], ["tab-pkg", "p-pkg"], ["tab-card", "p-card"]];
+  TABS.forEach(function (pair) {
+    $(pair[0]).addEventListener("click", function () {
+      TABS.forEach(function (p) {
+        var sel = p[0] === pair[0];
+        $(p[0]).setAttribute("aria-selected", sel ? "true" : "false");
+        $(p[1]).hidden = !sel;
+      });
+    });
+  });
+
+  /* ---------- copy ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll("button.copy"), function (btn) {
+    btn.addEventListener("click", function () {
+      var text = $(btn.dataset.target).textContent, done = false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text); done = true;
+        }
+      } catch (e) {}
+      if (!done) {
+        try {
+          var ta = document.createElement("textarea");
+          ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+          document.body.appendChild(ta); ta.select();
+          done = document.execCommand("copy");
+          document.body.removeChild(ta);
+        } catch (e2) {}
+      }
+      btn.textContent = done ? "Copied" : "Select it above";
+      setTimeout(function () { btn.textContent = "Copy"; }, 1800);
+    });
+  });
+
+  /* ---------- wire up ---------- */
+  function render() {
+    SPEEDS.forEach(function (s) {
+      var c = num("w_cool_" + s), e = num("w_exhaust_" + s);
+      $("d_" + s).textContent = (isFinite(c) && isFinite(e)) ? (Math.round((c + e) / 2 * 10) / 10) + " W" : "—";
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("input[data-req]"), function (el) {
+      el.classList.toggle("missing", !el.value.trim());
+    });
+    $("pkgpath").textContent = "packages/" + (val("f_slug") || "window_fan") + ".yaml";
+    drawPlot();
+    $("yaml-pkg").textContent = buildPackage();
+    $("yaml-card").textContent = buildCard();
+  }
+
+  document.addEventListener("input", function (e) {
+    if (e.target.tagName === "INPUT" && e.target.type !== "checkbox") render();
+  });
+  renderChecklist();
+  render();
+})();
+</script>

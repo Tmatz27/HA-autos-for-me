@@ -18,6 +18,12 @@ button to get anywhere we want.
 |---|---|
 | `dist/window-fan-card.js` | The Lovelace card. Install via HACS, configure with dropdowns — no YAML. |
 | `packages/window_fan_bedroom.yaml` | One file that creates every helper, sensor, script and automation. |
+| `docs/setup.html` | Setup page — enter your entities and wattages, get the config generated for you. |
+
+**Start here:** open `docs/setup.html` in a browser. Put in your entity IDs
+and the wattages you measured, and it generates the package file and card
+config, checks your readings are far enough apart to tell apart, and gives
+you a checklist of what's left to do.
 
 The card works entirely on its own — it decodes the plug wattage and sends
 the IR commands itself. The package is only needed if you also want the
