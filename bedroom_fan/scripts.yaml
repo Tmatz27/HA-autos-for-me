@@ -1,0 +1,89 @@
+# Merge into your top-level `script:` key (e.g. via
+# `script: !include_dir_merge_named bedroom_fan/` if you keep one script per
+# file, or just copy the `bedroom_fan_set_state` block into your existing
+# scripts.yaml).
+#
+# This is the only place that talks to the Broadlink remote. Every automation
+# calls this script with the function/speed it wants, and the script figures
+# out how many times to press each button from wherever the fan currently is
+# (per sensor.bedroom_fan_state), so nothing ever has to "remember" state on
+# its own or blindly power-cycle.
+#
+# Button loops on the physical remote:
+#   mode_toggle:  cool -> exhaust -> circulate -> cool  (repeats)
+#   speed_toggle: low -> med -> high -> low             (repeats)
+# Powering on always starts at cool / low.
+
+script:
+  bedroom_fan_set_state:
+    alias: Bedroom Fan - Set State
+    fields:
+      target_function:
+        name: Target Function
+        selector:
+          select:
+            options: ["cool", "exhaust"]
+      target_speed:
+        name: Target Speed
+        selector:
+          select:
+            options: ["low", "med", "high"]
+    sequence:
+      - if:
+          - condition: state
+            entity_id: sensor.bedroom_fan_state
+            state: "off"
+        then:
+          - action: remote.send_command
+            target:
+              entity_id: remote.master_remote
+            data:
+              device: Master Fan
+              command: power_toggle
+          - wait_template: "{{ states('sensor.bedroom_fan_state') != 'off' }}"
+            timeout: "00:00:15"
+          - delay: "00:00:01"
+      - variables:
+          state_now: "{{ states('sensor.bedroom_fan_state') }}"
+          current_function: >
+            {% if 'exhaust' in state_now %}exhaust
+            {% elif 'cool' in state_now %}cool
+            {% else %}circulate
+            {% endif %}
+          current_speed: >
+            {% if 'low' in state_now %}low
+            {% elif 'med' in state_now %}med
+            {% else %}high
+            {% endif %}
+          function_order: ["cool", "exhaust", "circulate"]
+          speed_order: ["low", "med", "high"]
+          function_presses: >
+            {{ (function_order.index(target_function) - function_order.index(current_function)) % 3 }}
+          speed_presses: >
+            {{ (speed_order.index(target_speed) - speed_order.index(current_speed)) % 3 }}
+      - repeat:
+          count: "{{ function_presses | int }}"
+          sequence:
+            - action: remote.send_command
+              target:
+                entity_id: remote.master_remote
+              data:
+                device: Master Fan
+                command: mode_toggle
+            - delay: "00:00:02"
+      - repeat:
+          count: "{{ speed_presses | int }}"
+          sequence:
+            - action: remote.send_command
+              target:
+                entity_id: remote.master_remote
+              data:
+                device: Master Fan
+                command: speed_toggle
+            - delay: "00:00:02"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.bedroom_fan_last_command_time
+        data:
+          timestamp: "{{ now().timestamp() }}"
+    mode: queued

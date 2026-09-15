@@ -1,0 +1,34 @@
+# Merge this into your configuration.yaml under the top-level `template:` key,
+# e.g. via `template: !include_dir_merge_list bedroom_fan/` or by copying the
+# `sensor:` list below into an existing `template:` block.
+#
+# Decodes the window fan's function + speed from the smart plug's live power
+# draw, since the Broadlink remote gives no feedback on its own. Bands are
+# based on measured values:
+#   exhaust: low 31W / med 33W / high 36W
+#   cool:    low 45W / med 48W / high 51W
+#   circulate sits roughly in the middle of both (one fan cool + one exhaust)
+#   and is never intentionally used, so it only needs a rough catch-all band.
+template:
+  - sensor:
+      - name: "Bedroom Fan State"
+        unique_id: bedroom_fan_state
+        state: >
+          {% set w = states('sensor.master_smart_plug_power') | float(0) %}
+          {% if w < 10 %}
+            off
+          {% elif w < 32.5 %}
+            exhaust_low
+          {% elif w < 34.5 %}
+            exhaust_med
+          {% elif w < 38 %}
+            exhaust_high
+          {% elif w < 43.5 %}
+            circulate
+          {% elif w < 46.5 %}
+            cool_low
+          {% elif w < 49.5 %}
+            cool_med
+          {% else %}
+            cool_high
+          {% endif %}

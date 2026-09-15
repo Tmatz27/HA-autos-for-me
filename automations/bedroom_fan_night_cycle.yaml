@@ -1,0 +1,44 @@
+alias: Bedroom Fan - Night Humidity Cycle
+description: >-
+  While in the night phase (after bedtime kickoff, before morning reset),
+  switch the fan to exhaust once the room is cool and humid enough to dehumidify,
+  then switch back to cool once the room warms up or dries out enough to
+  prioritize sleeping temperature. Speed always stays on high. A 30 minute
+  minimum gap between switches keeps the fan from beeping constantly while
+  readings hover near a threshold.
+triggers:
+  - trigger: state
+    entity_id: sensor.master_air_quality_temperature
+  - trigger: state
+    entity_id: sensor.master_air_quality_humidity
+conditions:
+  - condition: state
+    entity_id: input_boolean.bedroom_fan_night_phase
+    state: "on"
+  - condition: template
+    value_template: >-
+      {{ states('input_datetime.bedroom_fan_last_command_time') in ['unknown', 'unavailable']
+         or (now() - (states('input_datetime.bedroom_fan_last_command_time') | as_datetime)).total_seconds() >= 1800 }}
+actions:
+  - variables:
+      temp: "{{ states('sensor.master_air_quality_temperature') | float(99) }}"
+      humidity: "{{ states('sensor.master_air_quality_humidity') | float(0) }}"
+      fan_state: "{{ states('sensor.bedroom_fan_state') }}"
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ 'cool' in fan_state and temp <= 62 and humidity >= 75 }}"
+        sequence:
+          - action: script.bedroom_fan_set_state
+            data:
+              target_function: exhaust
+              target_speed: high
+      - conditions:
+          - condition: template
+            value_template: "{{ 'exhaust' in fan_state and (temp >= 65 or humidity <= 60) }}"
+        sequence:
+          - action: script.bedroom_fan_set_state
+            data:
+              target_function: cool
+              target_speed: high
+mode: single
