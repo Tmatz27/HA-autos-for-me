@@ -1,0 +1,74 @@
+# Copy each of these into your automations (via the automation editor's YAML
+# mode, one at a time, or append to your automations.yaml list). Requires the
+# corresponding files under blueprints/automation/ to be present under your
+# HA config's blueprints/automation/ directory.
+
+- id: bedroom_fan_bedtime_kickoff
+  alias: Bedroom Fan - Bedtime Kickoff
+  use_blueprint:
+    path: fan_bedtime_kickoff.yaml
+    input:
+      trigger_entity: media_player.lg_webos_tv_oled65c2pua
+      trigger_to_state: "unavailable"
+      trigger_for_seconds: 10
+      after_time: "20:00:00"
+      before_time: "23:59:59"
+      night_phase_boolean: input_boolean.bedroom_fan_night_phase
+      manual_override_boolean: input_boolean.bedroom_fan_manual_override
+      set_state_script: script.bedroom_fan_set_state
+      target_function: cool
+      target_speed: high
+
+- id: bedroom_fan_night_cycle
+  alias: Bedroom Fan - Night Humidity Cycle
+  use_blueprint:
+    path: fan_night_cycle.yaml
+    input:
+      temp_sensor: sensor.master_air_quality_temperature
+      humidity_sensor: sensor.master_air_quality_humidity
+      fan_state_sensor: sensor.bedroom_fan_state
+      night_phase_boolean: input_boolean.bedroom_fan_night_phase
+      manual_override_boolean: input_boolean.bedroom_fan_manual_override
+      last_command_datetime: input_datetime.bedroom_fan_last_command_time
+      set_state_script: script.bedroom_fan_set_state
+      dehumidify_temp_max: 62
+      dehumidify_humidity_min: 75
+      comfort_temp_min: 65
+      comfort_humidity_max: 60
+      dwell_minutes: 30
+      comfort_function: cool
+      dehumidify_function: exhaust
+      fan_speed: high
+
+- id: bedroom_fan_morning_reset
+  alias: Bedroom Fan - Morning Reset
+  use_blueprint:
+    path: fan_morning_reset.yaml
+    input:
+      outdoor_humidity_sensor: sensor.aso_vandenberg_humidity
+      outdoor_humidity_threshold: 75
+      fallback_time: "10:00:00"
+      night_phase_boolean: input_boolean.bedroom_fan_night_phase
+      set_state_script: script.bedroom_fan_set_state
+      target_function: cool
+      target_speed: high
+
+- id: bedroom_fan_day_cycle
+  alias: Bedroom Fan - Daytime Humidity Cycle
+  use_blueprint:
+    path: fan_day_cycle.yaml
+    input:
+      temp_sensor: sensor.master_air_quality_temperature
+      humidity_sensor: sensor.master_air_quality_humidity
+      fan_state_sensor: sensor.bedroom_fan_state
+      night_phase_boolean: input_boolean.bedroom_fan_night_phase
+      manual_override_boolean: input_boolean.bedroom_fan_manual_override
+      last_command_datetime: input_datetime.bedroom_fan_last_command_time
+      set_state_script: script.bedroom_fan_set_state
+      dehumidify_humidity_min: 68
+      comfort_humidity_max: 60
+      comfort_temp_max: 75
+      dwell_minutes: 30
+      comfort_function: cool
+      dehumidify_function: exhaust
+      fan_speed: high

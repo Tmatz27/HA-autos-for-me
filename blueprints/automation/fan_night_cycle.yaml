@@ -1,0 +1,177 @@
+blueprint:
+  name: Fan - Night Humidity/Temp Cycle
+  description: >-
+    While the night phase helper is on and manual override is off, switches
+    the fan to exhaust once the room is both cool and humid enough to
+    dehumidify, then back to a comfort function once the room warms up or
+    dries out enough. A minimum dwell time between switches limits repeated
+    beeping while readings hover near a threshold.
+  domain: automation
+  input:
+    temp_sensor:
+      name: Room Temperature Sensor
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    humidity_sensor:
+      name: Room Humidity Sensor
+      selector:
+        entity:
+          domain: sensor
+          device_class: humidity
+    fan_state_sensor:
+      name: Fan State Sensor
+      selector:
+        entity:
+          domain: sensor
+    night_phase_boolean:
+      name: Night Phase Helper
+      selector:
+        entity:
+          domain: input_boolean
+    manual_override_boolean:
+      name: Manual Override Helper
+      selector:
+        entity:
+          domain: input_boolean
+    last_command_datetime:
+      name: Last Command Timestamp Helper
+      selector:
+        entity:
+          domain: input_datetime
+    set_state_script:
+      name: Fan Set-State Script
+      selector:
+        entity:
+          domain: script
+    dehumidify_temp_max:
+      name: Max Temp To Allow Exhaust (°F)
+      description: Only switch to exhaust if room temp is at or below this.
+      default: 62
+      selector:
+        number:
+          min: 30
+          max: 90
+          unit_of_measurement: "°F"
+          mode: box
+    dehumidify_humidity_min:
+      name: Min Humidity To Trigger Exhaust (%)
+      default: 75
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+          mode: box
+    comfort_temp_min:
+      name: Min Temp To Force Back To Comfort Function (°F)
+      description: Switch back regardless of humidity once temp reaches this (comfort while sleeping wins).
+      default: 65
+      selector:
+        number:
+          min: 30
+          max: 90
+          unit_of_measurement: "°F"
+          mode: box
+    comfort_humidity_max:
+      name: Max Humidity To Switch Back To Comfort Function (%)
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+          mode: box
+    dwell_minutes:
+      name: Minimum Minutes Between Switches
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 180
+          unit_of_measurement: minutes
+          mode: box
+    comfort_function:
+      name: Comfort Function
+      default: cool
+      selector:
+        select:
+          options:
+            - "cool"
+            - "exhaust"
+    dehumidify_function:
+      name: Dehumidify Function
+      default: exhaust
+      selector:
+        select:
+          options:
+            - "cool"
+            - "exhaust"
+    fan_speed:
+      name: Fan Speed
+      default: high
+      selector:
+        select:
+          options:
+            - "low"
+            - "med"
+            - "high"
+
+triggers:
+  - trigger: state
+    entity_id: !input temp_sensor
+  - trigger: state
+    entity_id: !input humidity_sensor
+conditions:
+  - condition: state
+    entity_id: !input night_phase_boolean
+    state: "on"
+  - condition: state
+    entity_id: !input manual_override_boolean
+    state: "off"
+  - condition: template
+    value_template: >-
+      {{ states(last_command_datetime) in ['unknown', 'unavailable']
+         or (now() - (states(last_command_datetime) | as_datetime)).total_seconds() >= (dwell_minutes | int) * 60 }}
+variables:
+  temp_sensor: !input temp_sensor
+  humidity_sensor: !input humidity_sensor
+  fan_state_sensor: !input fan_state_sensor
+  last_command_datetime: !input last_command_datetime
+  set_state_script: !input set_state_script
+  dehumidify_temp_max: !input dehumidify_temp_max
+  dehumidify_humidity_min: !input dehumidify_humidity_min
+  comfort_temp_min: !input comfort_temp_min
+  comfort_humidity_max: !input comfort_humidity_max
+  dwell_minutes: !input dwell_minutes
+  comfort_function: !input comfort_function
+  dehumidify_function: !input dehumidify_function
+  fan_speed: !input fan_speed
+actions:
+  - variables:
+      temp: "{{ states(temp_sensor) | float(999) }}"
+      humidity: "{{ states(humidity_sensor) | float(0) }}"
+      fan_state: "{{ states(fan_state_sensor) }}"
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ comfort_function in fan_state and temp <= (dehumidify_temp_max | float)
+                 and humidity >= (dehumidify_humidity_min | float) }}
+        sequence:
+          - action: "{{ set_state_script }}"
+            data:
+              target_function: "{{ dehumidify_function }}"
+              target_speed: "{{ fan_speed }}"
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ dehumidify_function in fan_state and
+                 (temp >= (comfort_temp_min | float) or humidity <= (comfort_humidity_max | float)) }}
+        sequence:
+          - action: "{{ set_state_script }}"
+            data:
+              target_function: "{{ comfort_function }}"
+              target_speed: "{{ fan_speed }}"
+mode: single

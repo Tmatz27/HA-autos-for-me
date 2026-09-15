@@ -1,0 +1,18 @@
+# Merge into your top-level `script:` key. This creates
+# script.bedroom_fan_set_state from the shared fan_set_state.yaml blueprint.
+# Requires blueprints/script/fan_set_state.yaml to be present under your HA
+# config's blueprints/script/ directory.
+script:
+  bedroom_fan_set_state:
+    alias: Bedroom Fan - Set State
+    use_blueprint:
+      path: fan_set_state.yaml
+      input:
+        remote_entity: remote.master_remote
+        ir_device_name: "Master Fan"
+        mode_command: mode_toggle
+        speed_command: speed_toggle
+        press_delay_seconds: 2
+        power_switch_entity: switch.master_fan_plug
+        fan_state_sensor: sensor.bedroom_fan_state
+        last_command_datetime: input_datetime.bedroom_fan_last_command_time

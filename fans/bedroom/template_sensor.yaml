@@ -1,14 +1,13 @@
-# Merge this into your configuration.yaml under the top-level `template:` key,
-# e.g. via `template: !include_dir_merge_list bedroom_fan/` or by copying the
-# `sensor:` list below into an existing `template:` block.
+# Merge into your top-level `template:` key.
 #
-# Decodes the window fan's function + speed from the smart plug's live power
-# draw, since the Broadlink remote gives no feedback on its own. Bands are
-# based on measured values:
+# Decodes the bedroom window fan's function + speed from the smart plug's
+# live power draw, since the Broadlink remote gives no feedback on its own.
+# Bands are based on measured values:
 #   exhaust: low 31W / med 33W / high 36W
 #   cool:    low 45W / med 48W / high 51W
 #   circulate sits roughly in the middle of both (one fan cool + one exhaust)
-#   and is never intentionally used, so it only needs a rough catch-all band.
+#   and is never intentionally targeted, so it only needs a rough catch-all
+#   band.
 template:
   - sensor:
       - name: "Bedroom Fan State"
