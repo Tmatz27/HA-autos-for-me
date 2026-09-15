@@ -1,0 +1,302 @@
+# =============================================================================
+# Window Fan - Bedroom : all-in-one package
+# =============================================================================
+# Drop this file in  config/packages/window_fan_bedroom.yaml  and make sure
+# configuration.yaml contains:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# Then restart Home Assistant. Everything below is created for you - all the
+# helpers, the state sensor, the script, and the four automations. There is
+# nothing else to hand-create.
+#
+# -----------------------------------------------------------------------------
+# THE ONLY THINGS TO EDIT - find & replace these with your own entity IDs:
+# -----------------------------------------------------------------------------
+#   sensor.master_smart_plug_power           the plug's power (W) sensor
+#   switch.master_fan_plug                   the plug's switch entity
+#   remote.master_remote                     the IR remote entity
+#   Master Fan                               IR device name, as learned
+#   sensor.master_air_quality_temperature    room temperature
+#   sensor.master_air_quality_humidity       room humidity
+#   sensor.aso_vandenberg_humidity           outdoor humidity
+#   media_player.lg_webos_tv_oled65c2pua     the TV that signals bedtime
+#
+# Plus the wattage numbers in the template sensor below (see README for how
+# to measure yours) and the comfort thresholds in the automations.
+#
+# ENTITIES THIS CREATES:
+#   sensor.bedroom_fan_state                       cool_high / exhaust_low / circulate / off
+#   input_boolean.bedroom_fan_night_phase          on between bedtime and morning reset
+#   input_boolean.bedroom_fan_manual_override      pauses the cycle automations
+#   input_datetime.bedroom_fan_last_command_time   debounce timestamp
+#   script.bedroom_fan_set_state                   sets any mode + speed
+#   4 automations (bedtime, night cycle, morning reset, day cycle)
+# =============================================================================
+
+input_boolean:
+  bedroom_fan_night_phase:
+    name: Bedroom Fan Night Phase
+    icon: mdi:weather-night
+  bedroom_fan_manual_override:
+    name: Bedroom Fan Manual Override
+    icon: mdi:hand-back-right
+
+input_datetime:
+  bedroom_fan_last_command_time:
+    name: Bedroom Fan Last Command Time
+    has_date: true
+    has_time: true
+
+# -----------------------------------------------------------------------------
+# State decoder. The remote gives no feedback, but each mode/speed combination
+# draws a distinct, repeatable amount of power, so the plug tells us exactly
+# where the fan is. Measured on this fan:
+#   exhaust low/med/high = 31 / 33 / 36 W
+#   cool    low/med/high = 45 / 48 / 51 W
+#   circulate runs one fan each way, landing between the two.
+# -----------------------------------------------------------------------------
+template:
+  - sensor:
+      - name: "Bedroom Fan State"
+        unique_id: bedroom_fan_state
+        icon: mdi:fan
+        state: >
+          {% set w = states('sensor.master_smart_plug_power') | float(0) %}
+          {% if w < 10 %}off
+          {% elif w < 32 %}exhaust_low
+          {% elif w < 34.5 %}exhaust_med
+          {% elif w < 37 %}exhaust_high
+          {% elif w < 39.25 %}circulate_low
+          {% elif w < 42 %}circulate_med
+          {% elif w < 44.25 %}circulate_high
+          {% elif w < 46.5 %}cool_low
+          {% elif w < 49.5 %}cool_med
+          {% else %}cool_high
+          {% endif %}
+
+# -----------------------------------------------------------------------------
+# The only thing that talks to the remote. Works out how many times to press
+# each toggle button from wherever the fan currently is.
+#   mode_toggle:  cool -> exhaust -> circulate -> cool
+#   speed_toggle: low -> med -> high -> low
+# Powering on always lands at cool / low.
+# -----------------------------------------------------------------------------
+script:
+  bedroom_fan_set_state:
+    alias: Bedroom Fan - Set State
+    mode: queued
+    fields:
+      target_function:
+        name: Target Function
+        selector:
+          select:
+            options: ["cool", "exhaust", "circulate"]
+      target_speed:
+        name: Target Speed
+        selector:
+          select:
+            options: ["low", "med", "high"]
+    sequence:
+      - if:
+          - condition: state
+            entity_id: sensor.bedroom_fan_state
+            state: "off"
+        then:
+          - action: switch.turn_on
+            target:
+              entity_id: switch.master_fan_plug
+          - wait_template: "{{ states('sensor.bedroom_fan_state') != 'off' }}"
+            timeout: "00:00:15"
+          - delay: "00:00:01"
+      - variables:
+          state_now: "{{ states('sensor.bedroom_fan_state') }}"
+          current_function: >
+            {% if 'exhaust' in state_now %}exhaust
+            {% elif 'cool' in state_now %}cool
+            {% else %}circulate
+            {% endif %}
+          current_speed: >
+            {% if 'low' in state_now %}low
+            {% elif 'med' in state_now %}med
+            {% else %}high
+            {% endif %}
+          function_order: ["cool", "exhaust", "circulate"]
+          speed_order: ["low", "med", "high"]
+          function_presses: >
+            {{ (function_order.index(target_function) - function_order.index(current_function)) % 3 }}
+          speed_presses: >
+            {{ (speed_order.index(target_speed) - speed_order.index(current_speed)) % 3 }}
+      - repeat:
+          count: "{{ function_presses | int }}"
+          sequence:
+            - action: remote.send_command
+              target:
+                entity_id: remote.master_remote
+              data:
+                device: Master Fan
+                command: mode_toggle
+            - delay: "00:00:02"
+      - repeat:
+          count: "{{ speed_presses | int }}"
+          sequence:
+            - action: remote.send_command
+              target:
+                entity_id: remote.master_remote
+              data:
+                device: Master Fan
+                command: speed_toggle
+            - delay: "00:00:02"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.bedroom_fan_last_command_time
+        data:
+          timestamp: "{{ now().timestamp() }}"
+
+automation:
+  # ---------------------------------------------------------------------------
+  # 1. Bedtime. TV going unavailable after 8pm means we're heading to bed.
+  # ---------------------------------------------------------------------------
+  - alias: Bedroom Fan - Bedtime Kickoff
+    id: bedroom_fan_bedtime_kickoff
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: media_player.lg_webos_tv_oled65c2pua
+        to: "unavailable"
+        for:
+          seconds: 10
+    conditions:
+      - condition: time
+        after: "20:00:00"
+        before: "23:59:59"
+    actions:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.bedroom_fan_night_phase
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.bedroom_fan_manual_override
+      - action: script.bedroom_fan_set_state
+        data:
+          target_function: cool
+          target_speed: high
+
+  # ---------------------------------------------------------------------------
+  # 2. Overnight. Exhaust to dehumidify only while the room is already cool;
+  #    the moment it warms up, comfort wins and we go back to cool.
+  # ---------------------------------------------------------------------------
+  - alias: Bedroom Fan - Night Humidity Cycle
+    id: bedroom_fan_night_cycle
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: sensor.master_air_quality_temperature
+      - trigger: state
+        entity_id: sensor.master_air_quality_humidity
+    conditions:
+      - condition: state
+        entity_id: input_boolean.bedroom_fan_night_phase
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.bedroom_fan_manual_override
+        state: "off"
+      - condition: template
+        value_template: >-
+          {{ states('input_datetime.bedroom_fan_last_command_time') in ['unknown', 'unavailable']
+             or (now() - (states('input_datetime.bedroom_fan_last_command_time') | as_datetime)).total_seconds() >= 1800 }}
+    actions:
+      - variables:
+          temp: "{{ states('sensor.master_air_quality_temperature') | float(99) }}"
+          humidity: "{{ states('sensor.master_air_quality_humidity') | float(0) }}"
+          fan_state: "{{ states('sensor.bedroom_fan_state') }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ 'cool' in fan_state and temp <= 62 and humidity >= 75 }}"
+            sequence:
+              - action: script.bedroom_fan_set_state
+                data:
+                  target_function: exhaust
+                  target_speed: high
+          - conditions:
+              - condition: template
+                value_template: "{{ 'exhaust' in fan_state and (temp >= 65 or humidity <= 60) }}"
+            sequence:
+              - action: script.bedroom_fan_set_state
+                data:
+                  target_function: cool
+                  target_speed: high
+
+  # ---------------------------------------------------------------------------
+  # 3. Morning. Outdoor humidity here doesn't break until late morning, so
+  #    10am is a backstop for days it never does.
+  # ---------------------------------------------------------------------------
+  - alias: Bedroom Fan - Morning Reset
+    id: bedroom_fan_morning_reset
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.aso_vandenberg_humidity
+        below: 75
+      - trigger: time
+        at: "10:00:00"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.bedroom_fan_night_phase
+        state: "on"
+    actions:
+      - action: script.bedroom_fan_set_state
+        data:
+          target_function: cool
+          target_speed: high
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.bedroom_fan_night_phase
+
+  # ---------------------------------------------------------------------------
+  # 4. Daytime. Humidity first, but never let the room get hot enough that
+  #    we're fighting it again at bedtime.
+  # ---------------------------------------------------------------------------
+  - alias: Bedroom Fan - Daytime Humidity Cycle
+    id: bedroom_fan_day_cycle
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: sensor.master_air_quality_humidity
+      - trigger: state
+        entity_id: sensor.master_air_quality_temperature
+    conditions:
+      - condition: state
+        entity_id: input_boolean.bedroom_fan_night_phase
+        state: "off"
+      - condition: state
+        entity_id: input_boolean.bedroom_fan_manual_override
+        state: "off"
+      - condition: template
+        value_template: >-
+          {{ states('input_datetime.bedroom_fan_last_command_time') in ['unknown', 'unavailable']
+             or (now() - (states('input_datetime.bedroom_fan_last_command_time') | as_datetime)).total_seconds() >= 1800 }}
+    actions:
+      - variables:
+          temp: "{{ states('sensor.master_air_quality_temperature') | float(99) }}"
+          humidity: "{{ states('sensor.master_air_quality_humidity') | float(0) }}"
+          fan_state: "{{ states('sensor.bedroom_fan_state') }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ 'cool' in fan_state and humidity >= 68 }}"
+            sequence:
+              - action: script.bedroom_fan_set_state
+                data:
+                  target_function: exhaust
+                  target_speed: high
+          - conditions:
+              - condition: template
+                value_template: "{{ 'exhaust' in fan_state and (humidity <= 60 or temp >= 75) }}"
+            sequence:
+              - action: script.bedroom_fan_set_state
+                data:
+                  target_function: cool
+                  target_speed: high
