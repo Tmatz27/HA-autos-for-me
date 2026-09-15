@@ -1,0 +1,300 @@
+# Lovelace card: bedroom fan status + manual control.
+# Requires custom:button-card and custom:stack-in-card from HACS.
+# Add via your dashboard's "Add Card" -> "Manual" YAML editor.
+#
+# Visual: a header with a big fan icon + current status text, a row of 3
+# "mode lights" (Cool / Exhaust / Circulate) that glow when active, a row of
+# 3 "speed lights" (Low / Med / High) that glow when active, and a power
+# light. Every light is also a button - tapping it sends the command.
+type: custom:stack-in-card
+cards:
+  - type: custom:button-card
+    entity: sensor.bedroom_fan_state
+    show_name: true
+    name: Bedroom Fan
+    show_state: true
+    show_icon: true
+    icon: mdi:fan
+    size: 42%
+    state_display: |
+      [[[
+        const s = entity.state;
+        if (s === 'off') return 'Off';
+        if (s === 'circulate') return 'Circulate';
+        const [fn, sp] = s.split('_');
+        return fn.charAt(0).toUpperCase() + fn.slice(1) + ' • ' + sp.charAt(0).toUpperCase() + sp.slice(1);
+      ]]]
+    styles:
+      card:
+        - padding: 16px
+        - box-shadow: none
+        - background: none
+      grid:
+        - grid-template-areas: '"i n" "i s"'
+        - grid-template-columns: min-content auto
+      icon:
+        - width: 48px
+        - color: |
+            [[[
+              const s = entity.state;
+              if (s.includes('cool')) return '#3b82f6';
+              if (s.includes('exhaust')) return '#f97316';
+              if (s === 'circulate') return '#a855f7';
+              return 'var(--disabled-text-color)';
+            ]]]
+      name:
+        - justify-self: start
+        - font-weight: bold
+        - font-size: 18px
+      state:
+        - justify-self: start
+        - font-size: 14px
+        - color: var(--secondary-text-color)
+
+  - type: horizontal-stack
+    cards:
+      - type: custom:button-card
+        entity: sensor.bedroom_fan_state
+        name: Cool
+        icon: mdi:snowflake
+        show_state: false
+        tap_action:
+          action: call-service
+          service: script.bedroom_fan_set_state
+          service_data:
+            target_function: cool
+            target_speed: |
+              [[[ return entity.state.includes('_') ? entity.state.split('_')[1] : 'high' ]]]
+        styles:
+          card:
+            - border-radius: 50%
+            - width: 64px
+            - height: 64px
+            - margin: 8px auto
+            - background: |
+                [[[ return entity.state.includes('cool') ? 'rgba(59,130,246,0.22)' : 'rgba(128,128,128,0.06)' ]]]
+            - box-shadow: |
+                [[[ return entity.state.includes('cool') ? '0 0 14px 3px rgba(59,130,246,0.65)' : 'none' ]]]
+          icon:
+            - color: |
+                [[[ return entity.state.includes('cool') ? '#3b82f6' : 'var(--disabled-text-color)' ]]]
+          name:
+            - font-size: 12px
+            - margin-top: 2px
+      - type: custom:button-card
+        entity: sensor.bedroom_fan_state
+        name: Exhaust
+        icon: mdi:fan
+        show_state: false
+        tap_action:
+          action: call-service
+          service: script.bedroom_fan_set_state
+          service_data:
+            target_function: exhaust
+            target_speed: |
+              [[[ return entity.state.includes('_') ? entity.state.split('_')[1] : 'high' ]]]
+        styles:
+          card:
+            - border-radius: 50%
+            - width: 64px
+            - height: 64px
+            - margin: 8px auto
+            - background: |
+                [[[ return entity.state.includes('exhaust') ? 'rgba(249,115,22,0.22)' : 'rgba(128,128,128,0.06)' ]]]
+            - box-shadow: |
+                [[[ return entity.state.includes('exhaust') ? '0 0 14px 3px rgba(249,115,22,0.65)' : 'none' ]]]
+          icon:
+            - color: |
+                [[[ return entity.state.includes('exhaust') ? '#f97316' : 'var(--disabled-text-color)' ]]]
+          name:
+            - font-size: 12px
+            - margin-top: 2px
+      - type: custom:button-card
+        entity: sensor.bedroom_fan_state
+        name: Circulate
+        icon: mdi:autorenew
+        show_state: false
+        tap_action:
+          action: call-service
+          service: script.bedroom_fan_set_state
+          service_data:
+            target_function: circulate
+            target_speed: |
+              [[[ return entity.state.includes('_') ? entity.state.split('_')[1] : 'high' ]]]
+        styles:
+          card:
+            - border-radius: 50%
+            - width: 64px
+            - height: 64px
+            - margin: 8px auto
+            - background: |
+                [[[ return entity.state === 'circulate' ? 'rgba(168,85,247,0.22)' : 'rgba(128,128,128,0.06)' ]]]
+            - box-shadow: |
+                [[[ return entity.state === 'circulate' ? '0 0 14px 3px rgba(168,85,247,0.65)' : 'none' ]]]
+          icon:
+            - color: |
+                [[[ return entity.state === 'circulate' ? '#a855f7' : 'var(--disabled-text-color)' ]]]
+          name:
+            - font-size: 12px
+            - margin-top: 2px
+
+  - type: horizontal-stack
+    cards:
+      - type: custom:button-card
+        entity: sensor.bedroom_fan_state
+        name: Low
+        icon: mdi:speedometer-slow
+        show_state: false
+        tap_action:
+          action: call-service
+          service: script.bedroom_fan_set_state
+          service_data:
+            target_function: |
+              [[[ return entity.state.includes('exhaust') ? 'exhaust' : (entity.state === 'circulate' ? 'circulate' : 'cool') ]]]
+            target_speed: low
+        styles:
+          card:
+            - border-radius: 50%
+            - width: 56px
+            - height: 56px
+            - margin: 8px auto
+            - background: |
+                [[[ return entity.state.endsWith('_low') ? 'rgba(34,197,94,0.22)' : 'rgba(128,128,128,0.06)' ]]]
+            - box-shadow: |
+                [[[ return entity.state.endsWith('_low') ? '0 0 12px 2px rgba(34,197,94,0.65)' : 'none' ]]]
+          icon:
+            - color: |
+                [[[ return entity.state.endsWith('_low') ? '#22c55e' : 'var(--disabled-text-color)' ]]]
+          name:
+            - font-size: 11px
+            - margin-top: 2px
+      - type: custom:button-card
+        entity: sensor.bedroom_fan_state
+        name: Med
+        icon: mdi:speedometer-medium
+        show_state: false
+        tap_action:
+          action: call-service
+          service: script.bedroom_fan_set_state
+          service_data:
+            target_function: |
+              [[[ return entity.state.includes('exhaust') ? 'exhaust' : (entity.state === 'circulate' ? 'circulate' : 'cool') ]]]
+            target_speed: med
+        styles:
+          card:
+            - border-radius: 50%
+            - width: 56px
+            - height: 56px
+            - margin: 8px auto
+            - background: |
+                [[[ return entity.state.endsWith('_med') ? 'rgba(245,158,11,0.22)' : 'rgba(128,128,128,0.06)' ]]]
+            - box-shadow: |
+                [[[ return entity.state.endsWith('_med') ? '0 0 12px 2px rgba(245,158,11,0.65)' : 'none' ]]]
+          icon:
+            - color: |
+                [[[ return entity.state.endsWith('_med') ? '#f59e0b' : 'var(--disabled-text-color)' ]]]
+          name:
+            - font-size: 11px
+            - margin-top: 2px
+      - type: custom:button-card
+        entity: sensor.bedroom_fan_state
+        name: High
+        icon: mdi:speedometer
+        show_state: false
+        tap_action:
+          action: call-service
+          service: script.bedroom_fan_set_state
+          service_data:
+            target_function: |
+              [[[ return entity.state.includes('exhaust') ? 'exhaust' : (entity.state === 'circulate' ? 'circulate' : 'cool') ]]]
+            target_speed: high
+        styles:
+          card:
+            - border-radius: 50%
+            - width: 56px
+            - height: 56px
+            - margin: 8px auto
+            - background: |
+                [[[ return entity.state.endsWith('_high') ? 'rgba(239,68,68,0.22)' : 'rgba(128,128,128,0.06)' ]]]
+            - box-shadow: |
+                [[[ return entity.state.endsWith('_high') ? '0 0 12px 2px rgba(239,68,68,0.65)' : 'none' ]]]
+          icon:
+            - color: |
+                [[[ return entity.state.endsWith('_high') ? '#ef4444' : 'var(--disabled-text-color)' ]]]
+          name:
+            - font-size: 11px
+            - margin-top: 2px
+
+  - type: horizontal-stack
+    cards:
+      - type: custom:button-card
+        entity: switch.master_fan_plug
+        name: Power
+        icon: mdi:power
+        show_state: true
+        state_display: |
+          [[[ return entity.state === 'on' ? 'On' : 'Off' ]]]
+        tap_action:
+          action: toggle
+        styles:
+          card:
+            - border-radius: 16px
+            - padding: 6px
+          icon:
+            - color: |
+                [[[ return entity.state === 'on' ? '#22c55e' : 'var(--disabled-text-color)' ]]]
+      - type: custom:button-card
+        entity: input_boolean.bedroom_fan_manual_override
+        name: Manual Override
+        icon: mdi:hand-back-right
+        show_state: true
+        state_display: |
+          [[[ return entity.state === 'on' ? 'Automation paused' : 'Automation active' ]]]
+        tap_action:
+          action: toggle
+        styles:
+          card:
+            - border-radius: 16px
+            - padding: 6px
+          icon:
+            - color: |
+                [[[ return entity.state === 'on' ? '#f59e0b' : 'var(--disabled-text-color)' ]]]
+
+  - type: horizontal-stack
+    cards:
+      - type: custom:button-card
+        entity: sensor.master_air_quality_temperature
+        name: Room Temp
+        icon: mdi:thermometer
+        show_state: true
+        show_last_changed: false
+        styles:
+          card:
+            - box-shadow: none
+            - background: none
+          icon:
+            - color: |
+                [[[
+                  const t = parseFloat(entity.state);
+                  if (t >= 75) return '#ef4444';
+                  if (t <= 62) return '#3b82f6';
+                  return '#f59e0b';
+                ]]]
+      - type: custom:button-card
+        entity: sensor.master_air_quality_humidity
+        name: Room Humidity
+        icon: mdi:water-percent
+        show_state: true
+        show_last_changed: false
+        styles:
+          card:
+            - box-shadow: none
+            - background: none
+          icon:
+            - color: |
+                [[[
+                  const h = parseFloat(entity.state);
+                  if (h >= 75) return '#ef4444';
+                  if (h <= 60) return '#22c55e';
+                  return '#f59e0b';
+                ]]]

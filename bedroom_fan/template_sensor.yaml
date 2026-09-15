@@ -6,8 +6,6 @@
 #   exhaust: low 31W / med 33W / high 36W
 #   cool:    low 45W / med 48W / high 51W
 #   circulate sits roughly in the middle of both (one fan cool + one exhaust)
-#   and is never intentionally targeted, so it only needs a rough catch-all
-#   band.
 template:
   - sensor:
       - name: "Bedroom Fan State"
