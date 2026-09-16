@@ -1,218 +1,167 @@
-# Home Assistant project handoff
+# Home Assistant automation project
 
 Repository: https://github.com/Tmatz27/HA-autos-for-me
 
-Prepared September 15, 2026 after reading main's README.md, CLAUDE.md,
-packages/window_fan_bedroom.yaml, dist/window-fan-card.js, docs/setup.html,
-and hacs.json. This context distinguishes confirmed requirements from existing
-implementation. The handoff update changes documentation only; no Home Assistant
-configuration was changed or tested.
+This public handoff contains reusable technical context and example settings.
+It intentionally omits the household's location, daily routine, exact installed
+versions, and actual entity IDs. Configure personal values locally in Home Assistant.
+Example times are defaults to customize, not statements about occupancy.
 
-## Project scope
+## Repository scope
 
-Keep this repository for multiple personal Home Assistant automations over time.
-Organize each feature as a named package plus its documentation and relevant tests.
-The bedroom fan is the first feature. Keep the existing card paths stable for now.
-A separately distributed reusable card could later have its own repository, but
-there is no need to split every personal automation into a separate repository.
-Home Assistant supports grouping related integrations and automations in packages:
-https://www.home-assistant.io/docs/configuration/packages/
+Use this repository for multiple Home Assistant automations, organized by feature.
+The first feature controls a dual-motor IR window fan. Keep the existing card paths
+stable. A separately distributed card can be split out later if useful.
 
-## Latest user goals — supersede the older agreed thresholds
+## Desired fan behavior — still to be implemented
 
-- Keep the master bedroom comfortable at Vandenberg, where humidity is high.
-- Run cool/intake through the sleeping period until 5:00 a.m. local time.
-  Overnight cooling takes priority over drying, even if bedroom RH exceeds 70%.
-- At 5:00 a.m., switch to exhaust for the morning/daytime drying period when in
-  Auto. The room is very cool then; occupants usually wake between 6 and 8 a.m.
-  Some warming during exhaust is expected and acceptable.
-- Keep exhaust until outdoor conditions improve enough to return to cool/intake.
-  The user's criterion is outdoor humidity becoming normal and lower than bedroom
-  humidity. Refine intake eligibility with a moisture comparison, without silently
-  discarding the user's evening humidity protection rule below.
-- Before bedtime, switch to exhaust when outdoor RH exceeds bedroom RH. Outdoor
-  RH rises above 90% around sunset and intake makes the sheets feel damp quickly.
-  Keep this evening protection until the TV-based bedtime trigger starts cooling.
-- Keep the existing TV-based bedtime trigger: TV becoming unavailable indicates
-  living-room cleanup and getting ready for bed. It should clear manual override
-  (including manual Off), start cool/high, and begin the overnight phase.
-- Aim for bedroom temperature <=70 F by bedtime, usually around 9 p.m. General
-  daytime preference is below 75 F, possibly 73 F; use 73 F only as a tentative
-  tuning target, not a user-confirmed hard limit. Daytime humidity target is <=60%.
-  Overnight cooling priority remains in effect even when that RH target is missed.
-- Always use HIGH while running. Intentional manual OFF is explicitly allowed;
-  keep manual choices until the user selects Auto or the bedtime trigger resets
-  override. The 5 a.m. transition must respect an active manual override.
-- Reduce persistent dampness in bedding and clothing during the day.
-- Suggest bringing in the portable dehumidifier as a last resort when ventilation
-  cannot achieve the <=60% humidity target. Send a phone push notification AND a
-  persistent notification in Home Assistant. Notification only; no automatic
-  dehumidifier control has been requested. Use `notify.insert_here` as the phone
-  notification action placeholder; the user will replace it with their actual
-  action. Do not block implementation or ask again for the phone action name.
-  The alert persistence interval remains to be determined.
-- Provide a dashboard card for status, manual mode override, returning to Auto,
-  and viewing settings from other Home Assistant dashboards/devices.
-- The fan still beeps. The user could not open it because brackets blocked access.
-  Do not make completion depend on disabling the beeper.
+- Prioritize cool/intake while the configured sleep phase is active.
+- Start a drying phase at a configurable morning time; 05:00 is an example.
+- Exhaust when the replacement air offers useful drying, then permit intake when
+  outdoor conditions improve.
+- Before the sleep phase, prefer exhaust when outdoor relative humidity exceeds
+  room relative humidity. Evaluate dew point as an additional intake criterion.
+- Support a configurable bedtime trigger, such as a selected TV becoming
+  unavailable. It clears manual override, starts cool/high, and enters sleep mode.
+- Example comfort targets: <=70 F for sleep preparation, <=60% RH for daytime
+  drying, and a configurable daytime temperature limit in the 73–75 F range.
+  The temperature-versus-humidity conflict policy still needs tuning.
+- Use HIGH whenever running. Manual Off is allowed. Manual choices last until
+  Auto is selected or the configured bedtime trigger resets override.
+- Send a dehumidifier suggestion only when daytime ventilation is insufficient:
+  phone notification plus Home Assistant persistent notification. The sample
+  action is `notify.insert_here`; replace it locally. Alert persistence and
+  repeat suppression still need implementation.
+- Show actual fan state, Auto/Manual, phase, reason, readings, and settings on a
+  dashboard card. Avoid assuming that requested state equals physical state.
+- Limit unnecessary IR presses because the fan beeps. No hardware modification
+  is required.
 
-## Accomplished and verified by repository inspection
+## Guided setup direction
 
-- Broadlink remote codes are learned and work, according to the user.
-- Indoor and outdoor temperature/humidity readings are available, per user.
-- User explicitly confirms neither this card nor this package is installed yet.
-  Outdoor readings come from a weather station approximately one mile away; a
-  local outdoor sensor is planned but is not a prerequisite for initial setup.
-- dist/window-fan-card.js: custom dashboard card with entity configuration,
-  wattage-based mode/speed display, direct IR commands, power and override controls.
-- packages/window_fan_bedroom.yaml: two boolean helpers, one datetime helper,
-  decoded-state sensor, command script, and four automations.
-- docs/setup.html: entity/wattage configuration page that generates card/package YAML.
-- hacs.json: card distribution metadata exists. Installation/release success has
-  not been verified in this review.
-- The prior handoff reports simulated checks: 10/10 decodes, 7/7 press sequences,
-  13/13 generated-template band checks. These were not rerun in this review and
-  are not evidence of real-hardware reliability.
-- Earlier notes say the complete controller has never been tested against the
-  physical fan. Working learned IR commands do not establish end-to-end success.
+An automation blueprint can offer grouped form inputs for hardware, sensors,
+timing, comfort targets, override helpers, and notification actions. This is the
+current setup direction under consideration; the earlier blanket rejection of
+blueprints no longer applies.
 
-## Hardware and known entities
+An automation blueprint creates an automation from supplied inputs. It does not
+install a dashboard custom card or provision an entire package of helpers,
+template sensors, and scripts. Design a small one-time controller/helper setup
+plus a guided policy blueprint, and reuse the same controller from the card.
+Avoid enabling both the old package automations and the new blueprint controller.
 
-Home Assistant versions confirmed by the user's screenshot:
+Actual entity selections and schedule choices should remain in the locally
+created Home Assistant automation, not in this public repository. Blueprint
+implementation has not been completed.
 
-- Installation method: Home Assistant OS
-- Core: 2026.9.2
-- Supervisor: 2026.09.0
-- Operating System: 18.2
-- Frontend: 20260826.7
+References:
+- https://www.home-assistant.io/docs/blueprint/schema/
+- https://www.home-assistant.io/docs/blueprint/selectors/
+- https://www.home-assistant.io/docs/automation/using_blueprints/
 
-Mode cycles cool -> exhaust -> circulate -> cool. Speed cycles low -> med -> high.
-Exhaust -> cool needs two mode presses. Circulate is a transit state, not a desired
-operating mode. Recorded power-on behavior is cool/low; verify plug power restoration.
-Power control currently uses the smart plug. A plug already ON does not establish
-that the fan is running if someone used the IR power toggle.
+## Existing implementation
 
-Recorded wattages:
+- `dist/window-fan-card.js`: custom dashboard card, visual configuration,
+  wattage-based decoding, direct IR commands, power and override controls.
+- `packages/window_fan_bedroom.yaml`: two booleans, one datetime helper, state
+  sensor, command script, and four legacy automations.
+- `docs/setup.html`: entity/wattage configuration form generating card and package YAML.
+- `hacs.json`: distribution metadata.
+- Learned IR commands have been reported working. The complete controller still
+  needs real-hardware validation; do not imply successful installation.
+- Previous simulation results were reported as 10/10 decodes, 7/7 press sequences,
+  and 13/13 generated-template band checks. They were not rerun for this handoff.
+
+The existing package still uses legacy temperature/humidity cycles and an outdoor
+humidity/clock morning reset. It does not implement the desired morning drying
+schedule, evening protection, or dehumidifier advisory above.
+
+## Hardware model and calibration examples
+
+Mode cycles cool -> exhaust -> circulate -> cool.
+Speed cycles low -> med -> high -> low.
+Exhaust -> cool takes two mode presses. Circulate is a transit state.
+Recorded startup behavior is cool/low, but verify power restoration on each unit.
+A plug already ON does not imply the fan is running after an IR power toggle.
 
 | Mode | Low | Medium | High |
 | --- | --- | --- | --- |
 | Cool | 45 W | 48 W | 51 W |
 | Exhaust | 31 W | 33 W | 36 W |
-| Circulate, estimated only | 38 W | 40.5 W | 43.5 W |
+| Circulate, estimated | 38 W | 40.5 W | 43.5 W |
 
-Circulate values are inferred averages, not measurements. Verify all states,
-normal fluctuations, transition readings, and sensor reporting latency.
+These are calibration examples. Circulate readings are inferred averages and
+need measurement. Validate fluctuations, transition readings, reporting latency,
+and the current two-second inter-press delay.
 
-| Purpose | Existing entity/name |
+Generic configuration placeholders:
+
+| Purpose | Example |
 | --- | --- |
-| Plug power | sensor.master_smart_plug_power |
-| Plug switch | switch.master_fan_plug |
-| Broadlink | remote.master_remote |
-| IR device | Master Fan |
-| Commands | power_toggle, mode_toggle, speed_toggle |
-| Bedroom temperature | sensor.master_air_quality_temperature |
-| Bedroom RH | sensor.master_air_quality_humidity |
-| Outdoor temperature | sensor.aso_vandenberg_temperature |
-| Outdoor RH | sensor.aso_vandenberg_humidity |
-| Bedtime TV | media_player.lg_webos_tv_oled65c2pua |
+| Plug power | sensor.fan_power |
+| Plug switch | switch.fan_plug |
+| IR remote | remote.fan_remote |
+| IR device | Window Fan |
+| IR commands | power_toggle, mode_toggle, speed_toggle |
+| Room temperature | sensor.bedroom_temperature |
+| Room RH | sensor.bedroom_humidity |
+| Outdoor temperature | sensor.outdoor_temperature |
+| Outdoor RH | sensor.outdoor_humidity |
+| Bedtime trigger entity | media_player.bedtime_tv |
+| Phone notification | notify.insert_here |
 
-Plug is documented as a Shelly Plug US Gen4 over Matter. Power sensor was renamed
-previously. Confirm these IDs and temperature units rather than asking the user
-to rediscover everything. The outdoor weather-station readings are a proxy for
-window conditions, so allow for local differences when tuning the controls.
+## Reliability gaps
 
-## Existing behavior and gaps
+1. Legacy morning reset ignores manual override; only the bedtime reset should
+   intentionally clear it under the desired policy.
+2. HIGH is requested on commands but is not continuously enforced. The current
+   card allows lower speeds and preserves speed on a mode-only request.
+3. Card commands bypass the backend script queue and dwell timestamp. Separate
+   dashboards and automations can issue overlapping IR sequences.
+4. Commands are calculated from an initial reading without final target
+   confirmation or bounded recovery for missed IR.
+5. Missing power readings can be treated as off; the YAML startup wait can time
+   out and continue. Handle unavailable, stale, and ambiguous readings explicitly.
+6. Dwell applies only to the legacy night/day cycles. Dwell expiry alone does not
+   trigger reevaluation; restart/resume handling is incomplete.
+7. Legacy daytime branches can alternate under simultaneous high RH and high
+   temperature. Define explicit priority and hysteresis.
+8. Moisture comparison and dehumidifier notifications are not implemented.
 
-Current YAML uses the OLD policy: TV unavailable after 8 p.m. starts cool/high;
-night exhaust at <=62 F and >=75% RH; back to cool at >=65 F or <=60% RH;
-morning resets to cool when outdoor RH crosses below 75% or at 10 a.m.; daytime
-exhaust at >=68% RH and cool at <=60% RH or >=75 F. There is no 5 a.m. transition.
-Do not carry these thresholds forward as newly approved requirements.
+## Airflow and humidity
 
-Inspection found:
+Exhaust only helps drying if replacement air is drier. A typical useful setup
+draws house air through an open door; verify the actual airflow path locally.
+A house temperature/RH sensor can help quantify that benefit but is optional.
+Outdoor weather-station readings may differ from conditions at the window.
 
-1. Manual override only blocks the night/day cycle automations. Morning reset
-   ignores it; bedtime explicitly clears it. Latest decision: manual override
-   persists until Auto is selected or bedtime; other transitions must respect it.
-2. HIGH is requested on automated commands, but there is no continuous correction
-   for a physical remote speed change. Card buttons allow low/medium and a mode
-   click preserves the existing speed.
-3. The card sends IR independently of the queued backend script. Its busy flag
-   only protects that card instance; it does not serialize other dashboards or
-   automations, and card commands do not update the backend dwell timestamp.
-4. Both implementations calculate a press sequence from an initial reading and
-   lack final target confirmation with bounded recovery for missed commands.
-5. Missing power readings can be treated as off; YAML boot timeout can continue.
-   Add explicit unavailable/stale/ambiguous handling before relying on feedback.
-6. The 30-minute gap applies to night/day cycles, not all commands. Passing time
-   alone does not trigger reevaluation; neither cycle handles all restart/resume cases.
-7. The old day rules can alternate at high RH and high temperature, because the
-   cool-to-exhaust branch has no temperature guard.
-8. No dehumidifier advisory is implemented. No current indoor/outdoor dew-point
-   comparison is implemented.
+Compare dew points derived from temperature/RH to assess incoming moisture.
+Use room RH for the dryness target. Lower outdoor RH alone does not establish
+lower moisture content. A single low-RH reading does not prove textiles are dry.
+Reference: https://www.weather.gov/arx/why_dewpoint_vs_humidity
 
-Recommended implementation direction: have the bedroom card and automations use
-one serialized backend controller, validate fresh power feedback, confirm the
-result, and expose Auto/Manual, current phase, reason, readings, and settings.
-Keep the general card reusable if desired; enforce this bedroom's HIGH-only policy.
+Reaching a bedtime temperature target depends on available cooling time and
+conditions. Do not guarantee it or silently override humidity protection to
+achieve it. Tune from measured temperature and moisture trends.
 
-## Humidity design constraint
+## Next steps
 
-Relative humidity changes with temperature. Lower outdoor RH does not necessarily
-mean lower moisture content. Compare dew points derived from temperature and RH
-to judge whether incoming air offers drying potential; use room RH for the user's
-dryness target. Source: https://www.weather.gov/arx/why_dewpoint_vs_humidity
+1. Design the blueprint form and one-time controller/helper setup.
+2. Validate physical states, startup behavior, watts, sensor latency, and IR timing.
+3. Implement one serialized controller with feedback confirmation, manual override,
+   HIGH enforcement, and bounded error handling.
+4. Implement the policy blueprint and update card integration and setup guidance.
+5. Test schedule boundaries, restarts, sensor failures, manual Off, and missed IR.
+6. Observe real overnight/daytime behavior and tune; then configure additional fans.
 
-User confirms the bedroom door stays open and exhaust draws much drier air from
-inside the house. This makes exhaust a meaningful alternative to damp outdoor
-intake in this installation. An existing hallway/house temperature and RH sensor
-would help quantify the benefit, but is optional. If outdoor air is drier, intake
-may also dry the room. Do not promise that declining daytime outdoor RH alone
-guarantees moisture removal. Preserve the requested pre-bedtime outdoor-RH guard
-even if dew point is used as an additional criterion for resuming daytime intake.
+## Publication and privacy
 
-For a dehumidifier advisory, the target is <=60% RH and destinations are phone
-push plus Home Assistant persistent notifications. Choose and document a daytime
-persistence interval before implementation. Consider failure to make progress
-while exhausting house air, not just outdoor humidity. Avoid repeated alerts and
-do not treat one RH sample as proof that bedding is dry. No overnight drying
-alert policy has been agreed; do not create nuisance sleep-time notifications.
+The documentation handoff was merged and released as `v1.0.0`. An older release
+has tag `V0.1.0` despite a title containing "v1.0.0". Neither proves hardware
+validation or completion of the newly requested behavior.
 
-The <=70 F bedtime goal can conflict with holding exhaust until the TV trigger:
-the fan may not have enough cooling time before 9 p.m. Do not promise that target
-is guaranteed or silently introduce earlier damp-air intake. Use observed cooling
-rate and TV-trigger timing to determine whether further policy adjustment is needed.
+Generalizing current files does not erase earlier commits, pull request diffs,
+tags, release source archives, or external copies. Historical removal requires
+a separate, explicitly scoped cleanup. Do not claim the repository's history
+is anonymized merely because the current files use examples.
 
-## Information still needed
-
-1. Confirmation that the listed entity IDs still match. Home Assistant version is
-   recorded above; phone notification uses the user-requested `notify.insert_here`
-   placeholder and does not require further clarification.
-2. Optional existing house/hallway temperature and humidity sensor IDs; short
-   histories of indoor/outdoor conditions and plug watts will help tuning.
-3. Remaining tuning choices: 73 vs 75 F daytime limit, alert persistence, switch
-   hysteresis/dwell, and whether temperature may override the evening exhaust guard.
-   Do not invent user approval for a conflict-resolution rule.
-4. Whether settings should be editable on-card or just visible. Viewing settings
-   and manual control are requested; implementing a full settings editor is optional.
-
-## Next work in order
-
-1. Use the confirmed policy and airflow facts above; collect installation IDs and
-   settle the remaining tuning choices. Do not re-ask answered questions.
-2. Validate physical fan states, power-on behavior, sensor latency, and IR delay
-   using controlled commands before enabling unattended automation.
-3. Correct controller reliability, override handling, and HIGH enforcement; implement
-   the updated overnight/morning/day rules and dashboard controls.
-4. Keep setup-page generated YAML, package, README, and context consistent. Test
-   missed IR, stale readings, restarts, manual overrides and schedule boundaries.
-5. Observe at least an overnight/daytime cycle and tune from actual temperature
-   and moisture trends; add the agreed dehumidifier advisory.
-6. Configure fan two after the first fan is validated. Release inspection found
-   an older published tag `V0.1.0` titled "v1.0.0 - Bedroom Fan Automation";
-   the title and tag differ. A release of the current code does not establish
-   hardware validation or implementation of the requirements in this handoff.
-
-Preserve plain editable YAML; prior context rejected blueprints and assumed-state
-helpers. Reusing a helper for desired policy is distinct from assuming physical
-fan state. Do not claim deployment, release, push, or physical testing until done.

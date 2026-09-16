@@ -1,5 +1,10 @@
 # Window Fan Card + Automation
 
+Entity names, times, and thresholds in this repository are examples to customize
+locally. Keep actual household schedules and entity mappings in Home Assistant.
+See [CLAUDE.md](CLAUDE.md) for the proposed guided blueprint setup and known gaps.
+The current package still implements the legacy policy; a blueprint is not yet included.
+
 Home Assistant control for IR-remote window fans that report no state of
 their own — the kind with a mode button (cool → exhaust → circulate) and a
 speed button (low → med → high) that only cycle forward, with no way to ask
@@ -50,7 +55,7 @@ gives you a dropdown for every field:
 | Smart plug power sensor | The plug's power reading in watts. **Required.** |
 | Smart plug switch | The plug's on/off switch, used for power control. |
 | IR remote entity | Your Broadlink (or similar) remote. **Required.** |
-| IR device name | The device name you used when learning the codes, e.g. `Master Fan`. **Required.** |
+| IR device name | The device name you used when learning the codes, e.g. `Window Fan`. **Required.** |
 | Mode / speed toggle command | The learned command names. Default `mode_toggle` / `speed_toggle`. |
 | Seconds between presses | Time for the fan to register each press. Default 2. |
 | Room temperature / humidity | Optional, shown at the bottom of the card. |
@@ -159,3 +164,4 @@ All the thresholds are plain numbers in the automations — `62`, `65`, `75`,
 - If the fan gets out of sync (someone used the physical remote), it
   self-corrects on the next command — state is always re-read from the plug,
   never remembered.
+
