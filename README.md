@@ -55,9 +55,9 @@ gives you a dropdown for every field:
 | Smart plug power sensor | The plug's power reading in watts. **Required.** |
 | Smart plug switch | The plug's on/off switch, used for power control. |
 | IR remote entity | Your Broadlink (or similar) remote. **Required.** |
-| IR device name | The device name you used when learning the codes, e.g. `Window Fan`. **Required.** |
+| IR device name | The device name you used when learning the codes, e.g. `Window Fan`. **Case sensitive** — see below. **Required.** |
 | Mode / speed toggle command | The learned command names. Default `mode_toggle` / `speed_toggle`. |
-| Seconds between presses | Time for the fan to register each press. Default 2. |
+| Seconds between presses | Time for the fan to register each press. Default 2; 1 works on the reference fan. |
 | Room temperature / humidity | Optional, shown at the bottom of the card. |
 | Manual override helper | Optional; created by the package below. |
 | Measured wattages | Your fan's six readings — see calibration below. |
@@ -78,6 +78,18 @@ as the average of cool and exhaust at the same speed.
 
 (For reference, the fan this was built for reads: exhaust 31/33/36 W, cool
 45/48/51 W.)
+
+### If a button reports "Command not found"
+
+Check the **IR device name first**, not the command. Broadlink looks up
+`codes[device][command]` in a single `try`, so a wrong *device* name surfaces
+as `Command not found: '<command>'` and sends you off re-learning a command
+that was fine all along. Both names are case sensitive — `master fan` will not
+match codes learned under `Master Fan`.
+
+To see exactly what's stored: Settings → Devices & Services → your Broadlink
+device → ⋮ → **Download diagnostics**. The JSON lists every device and command
+verbatim.
 
 ### How it drives the fan
 

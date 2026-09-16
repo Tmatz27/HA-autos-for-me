@@ -67,8 +67,15 @@ References:
   sensor, command script, and four legacy automations.
 - `docs/setup.html`: entity/wattage configuration form generating card and package YAML.
 - `hacs.json`: distribution metadata.
-- Learned IR commands have been reported working. The complete controller still
-  needs real-hardware validation; do not imply successful installation.
+- Manual card control is confirmed working on real hardware: mode and speed
+  buttons drive the fan, at a one-second inter-press delay. The automation
+  package has NOT been validated against hardware; do not imply it has.
+- The IR device name is case sensitive and must match what the codes were
+  learned under exactly. Broadlink resolves `codes[device][command]` inside a
+  single try block, so a wrong device name reports as `Command not found:
+  '<command>'` — which sends you off re-learning a command that is already
+  fine. Check the device name first. This has already cost one debugging round
+  (`master fan` vs the learned `Master Fan`).
 - Previous simulation results were reported as 10/10 decodes, 7/7 press sequences,
   and 13/13 generated-template band checks. They were not rerun for this handoff.
 
@@ -91,8 +98,10 @@ A plug already ON does not imply the fan is running after an IR power toggle.
 | Circulate, estimated | 38 W | 40.5 W | 43.5 W |
 
 These are calibration examples. Circulate readings are inferred averages and
-need measurement. Validate fluctuations, transition readings, reporting latency,
-and the current two-second inter-press delay.
+need measurement. Validate fluctuations, transition readings, and reporting
+latency. Inter-press delay: one second is confirmed working on the reference
+fan. The card still defaults to two seconds for unknown hardware, since a
+missed press leaves the fan one step off its target with nothing to detect it.
 
 Generic configuration placeholders:
 
