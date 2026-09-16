@@ -377,7 +377,11 @@ class WindowFanCard extends HTMLElement {
     const raw = (err && (err.message || err.error || err.code)) || String(err);
     const cfg = this._config;
     if (/command|device/i.test(raw)) {
-      return `Remote rejected device "${cfg.ir_device}" or its command — check the learned names. (${raw})`;
+      // Broadlink looks up codes[device][command] in one try block, so a wrong
+      // device name reports as "Command not found" too. Both are case sensitive.
+      return `Remote rejected this. Check the IR device name "${cfg.ir_device}" matches what you ` +
+        `learned the codes under, exactly, including capitals — a wrong device name reports as a ` +
+        `missing command. If it matches, the command itself was never learned. (${raw})`;
     }
     if (/not found|unknown entity|unable to find|no such/i.test(raw)) {
       return `${cfg.remote} not found — check the remote's entity ID.`;
