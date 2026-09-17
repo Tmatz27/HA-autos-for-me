@@ -225,25 +225,25 @@
         <p class="step-note">Copy these from Developer Tools &rarr; States. The first four are required.</p>
         <div class="panel fields two">
           <label><span class="lbl">Plug power sensor <span class="hint">Watts. The whole system reads state from this.</span></span>
-            <input type="text" id="f_power" data-req="1" value="sensor.master_smart_plug_power"></label>
+            <input type="text" id="f_power" data-req="1" value="sensor.fan_power"></label>
           <label><span class="lbl">Plug switch <span class="hint">Used for deterministic power on/off.</span></span>
-            <input type="text" id="f_switch" data-req="1" value="switch.master_fan_plug"></label>
+            <input type="text" id="f_switch" data-req="1" value="switch.fan_plug"></label>
           <label><span class="lbl">IR remote <span class="hint">Your Broadlink or similar.</span></span>
-            <input type="text" id="f_remote" data-req="1" value="remote.master_remote"></label>
+            <input type="text" id="f_remote" data-req="1" value="remote.fan_remote"></label>
           <label><span class="lbl">IR device name <span class="hint">Exactly as typed when learning codes.</span></span>
-            <input type="text" id="f_device" data-req="1" value="Master Fan"></label>
+            <input type="text" id="f_device" data-req="1" value="Window Fan"></label>
           <label><span class="lbl">Mode toggle command</span>
             <input type="text" id="f_modecmd" value="mode_toggle"></label>
           <label><span class="lbl">Speed toggle command</span>
             <input type="text" id="f_speedcmd" value="speed_toggle"></label>
           <label><span class="lbl">Room temperature</span>
-            <input type="text" id="f_temp" value="sensor.master_air_quality_temperature"></label>
+            <input type="text" id="f_temp" value="sensor.bedroom_temperature"></label>
           <label><span class="lbl">Room humidity</span>
-            <input type="text" id="f_hum" value="sensor.master_air_quality_humidity"></label>
+            <input type="text" id="f_hum" value="sensor.bedroom_humidity"></label>
           <label><span class="lbl">Outdoor humidity <span class="hint">Ends the night phase when it drops.</span></span>
-            <input type="text" id="f_outhum" value="sensor.aso_vandenberg_humidity"></label>
-          <label><span class="lbl">Bedtime trigger <span class="hint">TV going unavailable means lights out.</span></span>
-            <input type="text" id="f_tv" value="media_player.lg_webos_tv_oled65c2pua"></label>
+            <input type="text" id="f_outhum" value="sensor.outdoor_humidity"></label>
+          <label><span class="lbl">Bedtime trigger <span class="hint">Example trigger: selected TV becomes unavailable.</span></span>
+            <input type="text" id="f_tv" value="media_player.bedtime_tv"></label>
           <label><span class="lbl">Name prefix <span class="hint">Used for every entity this creates.</span></span>
             <input type="text" id="f_slug" value="bedroom_fan"></label>
           <label><span class="lbl">Card title</span>
@@ -487,8 +487,8 @@
     var ent = "input_datetime." + slug + "_last_command_time";
     var secs = Math.round(num("t_dwell") * 60);
     return "        value_template: >-\n" +
-      "          {{ states('" + ent + "') in ['unknown', 'unavailable']\n" +
-      "             or (now() - (states('" + ent + "') | as_datetime)).total_seconds() >= " + secs + " }}";
+      "          {{ now().timestamp() -\n" +
+      "             (state_attr('" + ent + "', 'timestamp') | float(0)) >= " + secs + " }}";
   }
 
   function cycleActions(slug, toExhaust, toCool) {
@@ -634,7 +634,7 @@
       "          timestamp: \"{{ now().timestamp() }}\"",
       "",
       "automation:",
-      "  # Bedtime. The TV dropping off means we're heading up.",
+      "  # Bedtime. Example selected-TV unavailable trigger.",
       "  - alias: " + title + " - Bedtime Kickoff",
       "    id: " + slug + "_bedtime_kickoff",
       "    mode: restart",
