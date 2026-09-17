@@ -1,3 +1,5 @@
+# Public example: replace entity IDs locally. Times and thresholds are sample settings,
+# not a household schedule. This package still implements the legacy control policy.
 # =============================================================================
 # Window Fan - Bedroom : all-in-one package
 # =============================================================================
@@ -14,14 +16,14 @@
 # -----------------------------------------------------------------------------
 # THE ONLY THINGS TO EDIT - find & replace these with your own entity IDs:
 # -----------------------------------------------------------------------------
-#   sensor.master_smart_plug_power           the plug's power (W) sensor
-#   switch.master_fan_plug                   the plug's switch entity
-#   remote.master_remote                     the IR remote entity
-#   Master Fan                               IR device name, as learned
-#   sensor.master_air_quality_temperature    room temperature
-#   sensor.master_air_quality_humidity       room humidity
-#   sensor.aso_vandenberg_humidity           outdoor humidity
-#   media_player.lg_webos_tv_oled65c2pua     the TV that signals bedtime
+#   sensor.fan_power           the plug's power (W) sensor
+#   switch.fan_plug                   the plug's switch entity
+#   remote.fan_remote                     the IR remote entity
+#   Window Fan                               IR device name, as learned
+#   sensor.bedroom_temperature    room temperature
+#   sensor.bedroom_humidity       room humidity
+#   sensor.outdoor_humidity           outdoor humidity
+#   media_player.bedtime_tv     the TV that signals bedtime
 #
 # Plus the wattage numbers in the template sensor below (see README for how
 # to measure yours) and the comfort thresholds in the automations.
@@ -63,7 +65,7 @@ template:
         unique_id: bedroom_fan_state
         icon: mdi:fan
         state: >
-          {% set w = states('sensor.master_smart_plug_power') | float(0) %}
+          {% set w = states('sensor.fan_power') | float(0) %}
           {% if w < 10 %}off
           {% elif w < 32 %}exhaust_low
           {% elif w < 34.5 %}exhaust_med
@@ -106,7 +108,7 @@ script:
         then:
           - action: switch.turn_on
             target:
-              entity_id: switch.master_fan_plug
+              entity_id: switch.fan_plug
           - wait_template: "{{ states('sensor.bedroom_fan_state') != 'off' }}"
             timeout: "00:00:15"
           - delay: "00:00:01"
@@ -133,9 +135,9 @@ script:
           sequence:
             - action: remote.send_command
               target:
-                entity_id: remote.master_remote
+                entity_id: remote.fan_remote
               data:
-                device: Master Fan
+                device: Window Fan
                 command: mode_toggle
             - delay: "00:00:02"
       - repeat:
@@ -143,9 +145,9 @@ script:
           sequence:
             - action: remote.send_command
               target:
-                entity_id: remote.master_remote
+                entity_id: remote.fan_remote
               data:
-                device: Master Fan
+                device: Window Fan
                 command: speed_toggle
             - delay: "00:00:02"
       - action: input_datetime.set_datetime
@@ -156,14 +158,14 @@ script:
 
 automation:
   # ---------------------------------------------------------------------------
-  # 1. Bedtime. TV going unavailable after 8pm means we're heading to bed.
+  # 1. Bedtime. Example bedtime trigger: selected TV becomes unavailable after 8pm.
   # ---------------------------------------------------------------------------
   - alias: Bedroom Fan - Bedtime Kickoff
     id: bedroom_fan_bedtime_kickoff
     mode: restart
     triggers:
       - trigger: state
-        entity_id: media_player.lg_webos_tv_oled65c2pua
+        entity_id: media_player.bedtime_tv
         to: "unavailable"
         for:
           seconds: 10
@@ -192,9 +194,9 @@ automation:
     mode: single
     triggers:
       - trigger: state
-        entity_id: sensor.master_air_quality_temperature
+        entity_id: sensor.bedroom_temperature
       - trigger: state
-        entity_id: sensor.master_air_quality_humidity
+        entity_id: sensor.bedroom_humidity
     conditions:
       - condition: state
         entity_id: input_boolean.bedroom_fan_night_phase
@@ -204,12 +206,12 @@ automation:
         state: "off"
       - condition: template
         value_template: >-
-          {{ states('input_datetime.bedroom_fan_last_command_time') in ['unknown', 'unavailable']
-             or (now() - (states('input_datetime.bedroom_fan_last_command_time') | as_datetime)).total_seconds() >= 1800 }}
+          {{ now().timestamp() -
+             (state_attr('input_datetime.bedroom_fan_last_command_time', 'timestamp') | float(0)) >= 1800 }}
     actions:
       - variables:
-          temp: "{{ states('sensor.master_air_quality_temperature') | float(99) }}"
-          humidity: "{{ states('sensor.master_air_quality_humidity') | float(0) }}"
+          temp: "{{ states('sensor.bedroom_temperature') | float(99) }}"
+          humidity: "{{ states('sensor.bedroom_humidity') | float(0) }}"
           fan_state: "{{ states('sensor.bedroom_fan_state') }}"
       - choose:
           - conditions:
@@ -230,15 +232,15 @@ automation:
                   target_speed: high
 
   # ---------------------------------------------------------------------------
-  # 3. Morning. Outdoor humidity here doesn't break until late morning, so
-  #    10am is a backstop for days it never does.
+  # 3. Morning. Example outdoor-humidity reset with a clock fallback;
+  #    customize both locally.
   # ---------------------------------------------------------------------------
   - alias: Bedroom Fan - Morning Reset
     id: bedroom_fan_morning_reset
     mode: single
     triggers:
       - trigger: numeric_state
-        entity_id: sensor.aso_vandenberg_humidity
+        entity_id: sensor.outdoor_humidity
         below: 75
       - trigger: time
         at: "10:00:00"
@@ -264,9 +266,9 @@ automation:
     mode: single
     triggers:
       - trigger: state
-        entity_id: sensor.master_air_quality_humidity
+        entity_id: sensor.bedroom_humidity
       - trigger: state
-        entity_id: sensor.master_air_quality_temperature
+        entity_id: sensor.bedroom_temperature
     conditions:
       - condition: state
         entity_id: input_boolean.bedroom_fan_night_phase
@@ -276,12 +278,12 @@ automation:
         state: "off"
       - condition: template
         value_template: >-
-          {{ states('input_datetime.bedroom_fan_last_command_time') in ['unknown', 'unavailable']
-             or (now() - (states('input_datetime.bedroom_fan_last_command_time') | as_datetime)).total_seconds() >= 1800 }}
+          {{ now().timestamp() -
+             (state_attr('input_datetime.bedroom_fan_last_command_time', 'timestamp') | float(0)) >= 1800 }}
     actions:
       - variables:
-          temp: "{{ states('sensor.master_air_quality_temperature') | float(99) }}"
-          humidity: "{{ states('sensor.master_air_quality_humidity') | float(0) }}"
+          temp: "{{ states('sensor.bedroom_temperature') | float(99) }}"
+          humidity: "{{ states('sensor.bedroom_humidity') | float(0) }}"
           fan_state: "{{ states('sensor.bedroom_fan_state') }}"
       - choose:
           - conditions:
