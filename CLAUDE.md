@@ -67,15 +67,9 @@ References:
   sensor, command script, and four legacy automations.
 - `docs/setup.html`: entity/wattage configuration form generating card and package YAML.
 - `hacs.json`: distribution metadata.
-- Manual card control is confirmed working on real hardware: mode and speed
-  buttons drive the fan, at a one-second inter-press delay. The automation
-  package has NOT been validated against hardware; do not imply it has.
-- The IR device name is case sensitive and must match what the codes were
-  learned under exactly. Broadlink resolves `codes[device][command]` inside a
-  single try block, so a wrong device name reports as `Command not found:
-  '<command>'` — which sends you off re-learning a command that is already
-  fine. Check the device name first. This has already cost one debugging round
-  (`master fan` vs the learned `Master Fan`).
+- Learned IR commands have been reported working. Runtime logs now confirm that
+  the package automations are installed, but complete hardware validation remains
+  outstanding. Do not equate automation execution with correct fan behavior.
 - Previous simulation results were reported as 10/10 decodes, 7/7 press sequences,
   and 13/13 generated-template band checks. They were not rerun for this handoff.
 
@@ -98,10 +92,8 @@ A plug already ON does not imply the fan is running after an IR power toggle.
 | Circulate, estimated | 38 W | 40.5 W | 43.5 W |
 
 These are calibration examples. Circulate readings are inferred averages and
-need measurement. Validate fluctuations, transition readings, and reporting
-latency. Inter-press delay: one second is confirmed working on the reference
-fan. The card still defaults to two seconds for unknown hardware, since a
-missed press leaves the fan one step off its target with nothing to detect it.
+need measurement. Validate fluctuations, transition readings, reporting latency,
+and the current two-second inter-press delay.
 
 Generic configuration placeholders:
 
@@ -120,6 +112,12 @@ Generic configuration placeholders:
 | Phone notification | notify.insert_here |
 
 ## Reliability gaps
+
+The night/day dwell checks previously subtracted a timezone-naive parsed helper
+value from timezone-aware now(), causing condition errors. They now subtract the
+helper's numeric timestamp attribute from now().timestamp(); the setup generator
+uses the same fix. A missing timestamp defaults to zero, preserving the previous
+behavior of permitting an initial command when no last-command value is available.
 
 1. Legacy morning reset ignores manual override; only the bedtime reset should
    intentionally clear it under the desired policy.
@@ -173,4 +171,3 @@ Generalizing current files does not erase earlier commits, pull request diffs,
 tags, release source archives, or external copies. Historical removal requires
 a separate, explicitly scoped cleanup. Do not claim the repository's history
 is anonymized merely because the current files use examples.
-
