@@ -186,10 +186,6 @@ class WindowFanCard extends HTMLElement {
           .wfc.busy { opacity:.55; pointer-events:none; }
           .wfc-busy-note { text-align:center; font-size:12px; color: var(--secondary-text-color);
                            margin-top:10px; }
-          .wfc-notice { margin-top:12px; padding:8px 11px; border-radius:8px;
-                        font-size:12.5px; line-height:1.45; }
-          .wfc-notice.ok { background: rgba(34,197,94,.12); color:#16a34a; }
-          .wfc-notice.err { background: rgba(239,68,68,.12); color:#dc2626; }
         </style>
         <div class="wfc"></div>
       </ha-card>
@@ -308,9 +304,6 @@ class WindowFanCard extends HTMLElement {
       ${pills.length ? `<div class="wfc-divider"></div><div class="wfc-pills">${pills.join("")}</div>` : ""}
       ${stats.length ? `<div class="wfc-stats">${stats.join("")}</div>` : ""}
       ${this._busy ? `<div class="wfc-busy-note">Sending commands…</div>` : ""}
-      ${!this._busy && this._notice
-        ? `<div class="wfc-notice ${this._notice.kind}">${this._notice.text}</div>`
-        : ""}
     `;
   }
 
@@ -354,39 +347,10 @@ class WindowFanCard extends HTMLElement {
 
       await this._press(cfg.mode_command, modePresses);
       await this._press(cfg.speed_command, speedPresses);
-
-      var total = modePresses + speedPresses;
-      this._notice = total
-        ? { kind: "ok", text: `Sent ${total} press${total > 1 ? "es" : ""}.` }
-        : { kind: "ok", text: `Already on ${mode} / ${speed} — nothing to send.` };
-    } catch (err) {
-      this._notice = { kind: "err", text: this._explain(err) };
     } finally {
       this._busy = false;
       this._render();
-      clearTimeout(this._noticeTimer);
-      this._noticeTimer = setTimeout(() => {
-        this._notice = null;
-        this._render();
-      }, 8000);
     }
-  }
-
-  /** Service errors arrive as terse strings; name the likely cause. */
-  _explain(err) {
-    const raw = (err && (err.message || err.error || err.code)) || String(err);
-    const cfg = this._config;
-    if (/command|device/i.test(raw)) {
-      // Broadlink looks up codes[device][command] in one try block, so a wrong
-      // device name reports as "Command not found" too. Both are case sensitive.
-      return `Remote rejected this. Check the IR device name "${cfg.ir_device}" matches what you ` +
-        `learned the codes under, exactly, including capitals — a wrong device name reports as a ` +
-        `missing command. If it matches, the command itself was never learned. (${raw})`;
-    }
-    if (/not found|unknown entity|unable to find|no such/i.test(raw)) {
-      return `${cfg.remote} not found — check the remote's entity ID.`;
-    }
-    return raw;
   }
 
   async _press(command, times) {
@@ -443,7 +407,7 @@ const EDITOR_LABELS = {
   power_sensor: "Smart plug power sensor (W)",
   power_switch: "Smart plug switch (for power on/off)",
   remote: "IR remote entity",
-  ir_device: 'IR device name (as learned, e.g. "Master Fan")',
+  ir_device: 'IR device name (as learned, e.g. "Window Fan")',
   mode_command: "Mode/function toggle command",
   speed_command: "Speed toggle command",
   press_delay: "Seconds between button presses",
@@ -510,3 +474,4 @@ console.info(
   "color:#fff;background:#3b82f6;font-weight:700",
   "color:#3b82f6;background:#222"
 );
+
