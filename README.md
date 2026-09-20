@@ -1,179 +1,58 @@
-# Window Fan Card + Automation
+# Window Fan Card and Climate Control
 
-Entity names, times, and thresholds in this repository are examples to customize
-locally. Keep actual household schedules and entity mappings in Home Assistant.
-See [CLAUDE.md](CLAUDE.md) for the proposed guided blueprint setup and known gaps.
-The current package still implements the legacy policy; a blueprint is not yet included.
+A Home Assistant dashboard card and two configurable packages for a dual window fan controlled by a Broadlink remote. A smart plug supplies measured power feedback for all nine combinations of Cool, Exhaust and Circulate at Low, Medium and High speed.
 
-Home Assistant control for IR-remote window fans that report no state of
-their own — the kind with a mode button (cool → exhaust → circulate) and a
-speed button (low → med → high) that only cycle forward, with no way to ask
-the fan where it is.
+Version **1.2.0** adds shared calibration, confirmed toggle commands, and continuous High-speed bedroom/den policies. All entity IDs and hardware settings in this repository are examples. Configure them before installation.
 
-The trick: every mode/speed combination draws a distinct, repeatable amount
-of power, so a smart plug's energy monitoring tells us exactly what the fan
-is doing. From there we can work out precisely how many times to press each
-button to get anywhere we want.
+## Card and packages
 
-![Window Fan Card](docs/assets/window_fan_card.png)
+- The standalone card editor exposes all nine measured wattages, including Circulate. Missing or ambiguous calibration reports Unknown instead of inventing a state.
+- The managed card reads the package's state sensor and opens its shared wattage helpers. Card requests and automations use the same serialized controller.
+- Managed policies always enforce High speed, provide Cool/Exhaust requests, and never turn the fan off. Circulate and other speeds remain visible when observed.
+- The controller checks fresh power feedback after each independent mode or speed press. An unconfirmed press stops the sequence and reports an error; retries are limited to once per five minutes.
+- Absolute deadlines preserve sleep, burst and recovery phases across restarts. Missing sensor readings have explicit fallbacks.
 
-## What's here
+## Install or upgrade
 
-| | |
-|---|---|
-| `dist/window-fan-card.js` | The Lovelace card. Install via HACS, configure with dropdowns — no YAML. |
-| `packages/window_fan_bedroom.yaml` | One file that creates every helper, sensor, script and automation. |
-| `docs/setup.html` | Setup page — enter your entities and wattages, get the config generated for you. |
+Use Home Assistant 2024.10 or newer for these packages; they use the [modern automation YAML syntax](https://www.home-assistant.io/blog/2024/10/02/release-202410/#improved-yaml-syntax-for-automations).
 
-**Start here:** open `docs/setup.html` in a browser. Put in your entity IDs
-and the wattages you measured, and it generates the package file and card
-config, checks your readings are far enough apart to tell apart, and gives
-you a checklist of what's left to do.
-
-The card works entirely on its own — it decodes the plug wattage and sends
-the IR commands itself. The package is only needed if you also want the
-automated humidity/temperature management.
-
----
-
-## Part 1 — The card
-
-### Install
-
-1. HACS → three-dot menu → **Custom repositories**
-2. Repository: `https://github.com/Tmatz27/HA-autos-for-me`, type: **Dashboard**
-3. Find **Window Fan Card** in HACS → Download
-4. Hard-refresh your browser (Ctrl+Shift+R)
-
-### Add it
-
-Dashboard → Edit → **Add Card** → search "Window Fan". The visual editor
-gives you a dropdown for every field:
-
-| Field | What it is |
-|---|---|
-| Smart plug power sensor | The plug's power reading in watts. **Required.** |
-| Smart plug switch | The plug's on/off switch, used for power control. |
-| IR remote entity | Your Broadlink (or similar) remote. **Required.** |
-| IR device name | The device name you used when learning the codes, e.g. `Window Fan`. **Case sensitive** — see below. **Required.** |
-| Mode / speed toggle command | The learned command names. Default `mode_toggle` / `speed_toggle`. |
-| Seconds between presses | Time for the fan to register each press. Default 2; 1 works on the reference fan. |
-| Room temperature / humidity | Optional, shown at the bottom of the card. |
-| Manual override helper | Optional; created by the package below. |
-| Measured wattages | Your fan's six readings — see calibration below. |
-
-### Calibrate your fan
-
-This is the one step that's specific to your hardware. Watch the plug's
-power sensor and step the fan through each combination, noting the watts:
-
-| | Low | Med | High |
-|---|---|---|---|
-| **Cool** | | | |
-| **Exhaust** | | | |
-
-Put those six numbers in the card's **Measured wattages** section. You don't
-need to measure circulate — it runs one fan each way, so the card derives it
-as the average of cool and exhaust at the same speed.
-
-(For reference, the fan this was built for reads: exhaust 31/33/36 W, cool
-45/48/51 W.)
-
-### If a button reports "Command not found"
-
-Check the **IR device name first**, not the command. Broadlink looks up
-`codes[device][command]` in a single `try`, so a wrong *device* name surfaces
-as `Command not found: '<command>'` and sends you off re-learning a command
-that was fine all along. Both names are case sensitive — `master fan` will not
-match codes learned under `Master Fan`.
-
-To see exactly what's stored: Settings → Devices & Services → your Broadlink
-device → ⋮ → **Download diagnostics**. The JSON lists every device and command
-verbatim.
-
-### How it drives the fan
-
-Both loops only move forward, so the card counts steps around them:
-
-- **Mode:** cool → exhaust → circulate → cool. Cool to exhaust is 1 press;
-  exhaust back to cool is 2 (it steps through circulate).
-- **Speed:** low → med → high → low.
-
-If the fan is off, the card switches the plug on first — the fan always
-boots to cool/low — then presses on from there. Buttons are disabled while a
-sequence is in flight so a double-tap can't desync the count.
-
----
-
-## Part 2 — The automation package
-
-Only needed if you want hands-off humidity/temperature management.
-
-### Install
-
-1. Make sure `configuration.yaml` has:
+1. Back up existing fan packages and dashboard configuration. Replace old fan packages and disable separately copied legacy automations so each fan has one controller.
+2. Configure the external entities and learned Broadlink device/command names in `HARDWARE` and `cfg` in `build.py`. Replace `media_player.bedtime_tv` with the desired TV entity. Set the schedule and climate limits there, then run `python build.py`. This updates every embedded reference consistently. Alternatively replace each placeholder throughout the generated YAML, including triggers, templates and action targets; editing only `cfg` is insufficient for hardware remapping.
+3. Measure all nine operating states and configure calibration. The included numeric bands are examples, not universal fan specifications. See [calibration and controller settings](docs/CONTROL.md).
+4. Copy the selected generated files from `packages/` into the Home Assistant packages directory. Enable [packages](https://www.home-assistant.io/docs/configuration/packages/) if necessary:
 
    ```yaml
    homeassistant:
      packages: !include_dir_named packages
    ```
 
-2. Copy `packages/window_fan_bedroom.yaml` into `config/packages/`
-3. Open it and find-and-replace the eight entity IDs listed at the top of
-   the file (they're all called out in a block — nothing is hidden further
-   down)
-4. Restart Home Assistant
+5. Install `dist/window-fan-card.js` as a JavaScript module dashboard resource, or update the existing HACS custom repository installation. The release includes the same `window-fan-card.js` asset. Keep one resource URL and hard-refresh the dashboard; the browser console should show 1.2.0.
+6. Run Home Assistant's configuration check and restart. Add the matching card YAML from `examples/`. Verify that `sensor.bedroom_fan_state`, `sensor.den_fan_state` and the corresponding control-status sensors have the expected IDs; resolve any duplicate entity suffixes consistently.
+7. Observe the first complete control cycle and adjust calibration/timing to the fan and smart plug. Software tests do not replace checking the installation against physical equipment.
 
-That's the whole setup. There are **no helpers to create by hand** — the
-package makes all of them.
+The packages and managed card should be upgraded together. The old setup generator has been replaced with an updated [setup guide](https://tmatz27.github.io/HA-autos-for-me/setup.html); generated settings now come from the versioned Python builder.
 
-### What it creates
+## Example policies
 
-| Entity | Purpose |
-|---|---|
-| `sensor.bedroom_fan_state` | Decoded state: `cool_high`, `exhaust_low`, `circulate_med`, `off`, … |
-| `input_boolean.bedroom_fan_night_phase` | On between bedtime and the morning reset |
-| `input_boolean.bedroom_fan_manual_override` | Pauses the cycle automations |
-| `input_datetime.bedroom_fan_last_command_time` | Debounce timestamp |
-| `script.bedroom_fan_set_state` | Sets any mode + speed |
-| 4 automations | Bedtime, night cycle, morning reset, day cycle |
+The bedroom example uses a configurable **22:00–06:00** bedtime window. A TV transition to off/standby/unavailable or a manual Cool selection starts Cool/High until morning. A TV already off at the start of the window does not start Sleep. Morning begins Exhaust drying, followed by daytime temperature/humidity control with limited cooling bursts during humidity protection.
 
-Point the card's **Manual override helper** field at
-`input_boolean.bedroom_fan_manual_override` and the card's override pill
-will pause the automations, so a manual choice sticks instead of being
-reverted 30 minutes later.
+The den example runs Exhaust/High continuously until room temperature reaches its cooling threshold. Cooling runs in timed bursts, ending early when the room cools sufficiently; acceptable indoor humidity permits extensions.
 
-### What the automations do
+Outside temperature is informational and does not veto cooling. Outdoor relative humidity informs bedroom protection; den control uses indoor readings. Relative-humidity differences are a configurable heuristic, not a calculation of absolute moisture. Exhaust removes moisture only when replacement air is effectively drier; these controls cannot guarantee room limits.
 
-1. **Bedtime kickoff** — when the TV goes `unavailable` after 8pm, clear the
-   override, set cool/high, and enter the night phase.
-2. **Night cycle** — switch to exhaust to dehumidify, but only while the room
-   is genuinely cool (≤62 °F) and humid (≥75 %). The moment it warms to
-   65 °F, or dries to 60 %, go back to cool — sleeping comfort outranks
-   humidity.
-3. **Morning reset** — end the night phase when outdoor humidity drops below
-   75 %, or at 10am, whichever comes first. Outdoor humidity here often
-   doesn't break until late morning, so 10am is the backstop.
-4. **Day cycle** — humidity first (exhaust at ≥68 %, cool at ≤60 %), but never
-   let the room pass 75 °F, so we're not fighting a hot room at bedtime.
+See [CONTROL.md](docs/CONTROL.md) for the exact sample thresholds, calibration behavior, timing and limitations.
 
-Speed stays on high throughout. Every switch is held to a **30-minute
-minimum gap** — the fan beeps on each press, and this is a bedroom.
+## Development
 
-### Tuning
+Python 3.11+ and Node.js 20+ are sufficient for the software checks:
 
-All the thresholds are plain numbers in the automations — `62`, `65`, `75`,
-`60`, `68`, `1800` (the debounce, in seconds). Edit them directly.
+```sh
+python -m pip install -r requirements-test.txt
+python build.py
+python tests/test_control.py
+node tests/card.test.cjs
+```
 
----
+`build.py` and `templates/` are the package sources. The builder generates `packages/` and `examples/`; the test module imports it and regenerates these files before testing. Maintain the card directly in `dist/window-fan-card.js`. Tests execute the generated controller with simulated motor transitions and delayed power reports, and exercise policy decisions and card behavior. They do not start a Home Assistant instance.
 
-## Notes
-
-- Power on/off uses the plug's switch rather than the remote's power button.
-  The IR power button is a blind toggle; the switch is deterministic.
-- The card needs no helpers, template sensors, or scripts. Those exist only
-  for the automations, which run server-side and can't use the card's logic.
-- If the fan gets out of sync (someone used the physical remote), it
-  self-corrects on the next command — state is always re-read from the plug,
-  never remembered.
-
+Publish only generalized examples. Keep installation-specific entity IDs, remote device names, locations, screenshots and schedules out of commits and release attachments.
