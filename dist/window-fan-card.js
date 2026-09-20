@@ -6,10 +6,10 @@
  * draw, shows them as indicator lights, and drives the fan by working out
  * exactly how many times to press the remote's mode/speed toggle buttons.
  *
- * No helpers, template sensors or scripts are required for the card itself.
+ * Standalone mode needs no helpers. Managed mode shares package state and commands.
  */
 
-const CARD_VERSION = "1.0.0";
+const CARD_VERSION = "1.2.0";
 
 const MODES = ["cool", "exhaust", "circulate"];
 const SPEEDS = ["low", "med", "high"];
@@ -22,6 +22,10 @@ const DEFAULT_WATTS = {
   cool_low: 45,
   cool_med: 48,
   cool_high: 51,
+  circulate_low: null,
+  circulate_med: null,
+  circulate_high: null,
+  max_deviation: 1,
 };
 
 const MODE_META = {
@@ -49,10 +53,10 @@ const SPEED_META = {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const RANGE_KEYS = ["off_below", "exhaust_low_upper", "exhaust_med_upper", "exhaust_high_upper", "circulate_low_upper", "circulate_med_upper", "circulate_high_upper", "cool_low_upper", "cool_med_upper"];
 
-/** Builds the full 9-entry wattage lookup table. Circulate runs one fan in
- * each direction, so its draw is the average of cool and exhaust at the
- * same speed - no need to measure it separately. */
+/** All nine states must be measured; motor direction does not establish watts. */
 function buildWattTable(w) {
   const table = [];
   for (const speed of SPEEDS) {
@@ -60,24 +64,38 @@ function buildWattTable(w) {
     const exhaust = Number(w[`exhaust_${speed}`]);
     table.push({ mode: "cool", speed, watts: cool });
     table.push({ mode: "exhaust", speed, watts: exhaust });
-    table.push({ mode: "circulate", speed, watts: (cool + exhaust) / 2 });
+    table.push({ mode: "circulate", speed, watts: Number(w[`circulate_${speed}`]) });
   }
   return table;
 }
 
 function decodeWatts(watts, w) {
-  if (!Number.isFinite(watts) || watts < Number(w.off_below)) {
+  const unknown = (reason) => ({ on: null, mode: null, speed: null, reason });
+  if ([w.off_below, w.max_deviation].some(v => v === null || v === "" || !Number.isFinite(Number(v)) || Number(v) < 0)) {
+    return unknown("Configure valid off and maximum-difference wattages");
+  }
+  if (!Number.isFinite(watts) || watts < 0) return unknown("Power reading unavailable");
+  if (watts < Number(w.off_below)) {
     return { on: false, mode: null, speed: null };
   }
+  if (MODES.some(mode => SPEEDS.some(speed => {
+    const v = w[`${mode}_${speed}`];
+    return v === null || v === "" || !Number.isFinite(Number(v)) || Number(v) < Number(w.off_below);
+  }))) return unknown("Measure all nine mode/speed wattages in card settings");
   let best = null;
   let bestDistance = Infinity;
+  let tied = false;
   for (const row of buildWattTable(w)) {
     const distance = Math.abs(row.watts - watts);
     if (distance < bestDistance) {
       bestDistance = distance;
       best = row;
+      tied = false;
+    } else if (Math.abs(distance - bestDistance) < 1e-9) {
+      tied = true;
     }
   }
+  if (tied || bestDistance > Number(w.max_deviation)) return unknown("Power reading does not identify a unique calibrated state");
   return { on: true, mode: best.mode, speed: best.speed };
 }
 
@@ -124,18 +142,23 @@ class WindowFanCard extends HTMLElement {
     if (!config.power_sensor) {
       throw new Error("window-fan-card: 'power_sensor' is required");
     }
-    if (!config.remote) {
+    if (!config.remote && !config.controller_script) {
       throw new Error("window-fan-card: 'remote' is required");
     }
-    if (!config.ir_device) {
+    if (!config.ir_device && !config.controller_script) {
       throw new Error("window-fan-card: 'ir_device' is required");
     }
+    if (config.controller_script && (!config.state_sensor || !/^script\.[a-z0-9_]+$/.test(config.controller_script))) {
+      throw new Error("A linked controller needs a script entity and its shared state sensor.");
+    }
+    if (config.managed && !config.controller_script) throw new Error("Managed control requires a controller script.");
     this._config = {
       name: "Window Fan",
       mode_command: "mode_toggle",
       speed_command: "speed_toggle",
       press_delay: 2,
       boot_delay: 4,
+      feedback_timeout: 20,
       ...config,
       watts: { ...DEFAULT_WATTS, ...(config.watts || {}) },
     };
@@ -152,8 +175,15 @@ class WindowFanCard extends HTMLElement {
   }
 
   _state() {
+    if (this._config.state_sensor) {
+      const value = this._hass?.states[this._config.state_sensor]?.state;
+      if (value === "off") return { on: false, mode: null, speed: null };
+      const [mode, speed] = (value || "").split("_");
+      if (MODES.includes(mode) && SPEEDS.includes(speed)) return { on: true, mode, speed };
+      return { on: null, mode: null, speed: null, reason: "Waiting for valid shared fan state" };
+    }
     const raw = this._hass?.states[this._config.power_sensor]?.state;
-    return decodeWatts(parseFloat(raw), this._config.watts);
+    return decodeWatts(raw == null || raw === "" ? NaN : Number(raw), this._config.watts);
   }
 
   _build() {
@@ -184,6 +214,11 @@ class WindowFanCard extends HTMLElement {
           .wfc-stat-value { font-size:13px; font-weight:600; }
           .wfc-stat-label { font-size:11px; color: var(--secondary-text-color); }
           .wfc.busy { opacity:.55; pointer-events:none; }
+          .wfc-light.disabled { cursor:default; opacity:.5; }
+          .wfc-calibration { margin-top:14px; font-size:12px; }
+          .wfc-calibration summary { cursor:pointer; padding:8px 0; }
+          .wfc-calibration button { display:flex; justify-content:space-between; width:100%; padding:9px; margin:3px 0; border:0; border-radius:6px; color:var(--primary-text-color); background:rgba(127,127,127,.08); cursor:pointer; }
+          .wfc-calibration p { color:var(--secondary-text-color); }
           .wfc-busy-note { text-align:center; font-size:12px; color: var(--secondary-text-color);
                            margin-top:10px; }
         </style>
@@ -199,6 +234,9 @@ class WindowFanCard extends HTMLElement {
       else if (action === "speed") this._setState(null, value);
       else if (action === "power") this._togglePower();
       else if (action === "override") this._toggleOverride();
+      else if (action === "calibration") this.dispatchEvent(new CustomEvent("hass-more-info", {
+        detail: { entityId: value }, bubbles: true, composed: true,
+      }));
     });
     this._built = true;
   }
@@ -214,15 +252,16 @@ class WindowFanCard extends HTMLElement {
     const headerColor = st.on ? MODE_META[st.mode].color : dim;
     const headerText = st.on
       ? `${MODE_META[st.mode].label} • ${SPEED_META[st.speed].label}`
-      : "Off";
+      : st.on === false ? "Off" : st.reason;
 
     const modeLights = MODES.map((mode) => {
       const meta = MODE_META[mode];
       const active = st.on && st.mode === mode;
       const bg = active ? `${meta.color}38` : "rgba(127,127,127,.08)";
       const glow = active ? `box-shadow:0 0 14px 3px ${meta.color}a6;` : "";
+      const disabled = cfg.managed && mode === "circulate";
       return `
-        <div class="wfc-light" data-action="mode" data-value="${mode}">
+        <div class="wfc-light${disabled ? " disabled" : ""}" ${disabled ? 'aria-disabled="true"' : 'data-action="mode"'} data-value="${mode}">
           <div class="wfc-dot" style="background:${bg};${glow}">
             ${iconSvg(meta.path, active ? meta.color : dim, 26)}
           </div>
@@ -235,8 +274,9 @@ class WindowFanCard extends HTMLElement {
       const active = st.on && st.speed === speed;
       const bg = active ? `${meta.color}38` : "rgba(127,127,127,.08)";
       const glow = active ? `box-shadow:0 0 12px 2px ${meta.color}a6;` : "";
+      const disabled = cfg.managed && speed !== "high";
       return `
-        <div class="wfc-light" data-action="speed" data-value="${speed}">
+        <div class="wfc-light${disabled ? " disabled" : ""}" ${disabled ? 'aria-disabled="true"' : 'data-action="speed"'} data-value="${speed}">
           <div class="wfc-dot sm" style="background:${bg};${glow}">
             ${speedBarsSvg(meta.bars, active ? meta.color : dim, dim)}
           </div>
@@ -245,7 +285,7 @@ class WindowFanCard extends HTMLElement {
     }).join("");
 
     const pills = [];
-    if (cfg.power_switch) {
+    if (cfg.power_switch && !cfg.managed) {
       const on = this._hass.states[cfg.power_switch]?.state === "on";
       const color = on ? "#22c55e" : dim;
       pills.push(`
@@ -257,7 +297,7 @@ class WindowFanCard extends HTMLElement {
           </div>
         </div>`);
     }
-    if (cfg.override_boolean) {
+    if (cfg.override_boolean && !cfg.managed) {
       const on = this._hass.states[cfg.override_boolean]?.state === "on";
       const color = on ? "#f59e0b" : dim;
       pills.push(`
@@ -290,12 +330,21 @@ class WindowFanCard extends HTMLElement {
       ));
     }
 
+    const calibrationOpen = this._root.querySelector("details")?.open;
+    const status = cfg.status_sensor ? this._hass.states[cfg.status_sensor] : null;
+    const backendError = status?.attributes?.error;
+    const validError = backendError && !["unknown", "unavailable"].includes(backendError) ? backendError : "";
+    const end = Number(status?.attributes?.cycle_end_timestamp);
+    const timedCycle = ["burst", "extension", "extended", "recovery"].includes(status?.attributes?.cycle);
+    const deadlineText = timedCycle && end > Date.now() / 1000
+      ? new Date(end * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", ...(this._hass.config?.time_zone ? {timeZone:this._hass.config.time_zone} : {}) })
+      : "";
     this._root.className = `wfc${this._busy ? " busy" : ""}`;
     this._root.innerHTML = `
       <div class="wfc-header">
         ${iconSvg(MODE_META.exhaust.path, headerColor, 42)}
         <div>
-          <div class="wfc-title">${cfg.name}</div>
+          <div class="wfc-title">${escapeHtml(cfg.name)}</div>
           <div class="wfc-sub">${headerText}</div>
         </div>
       </div>
@@ -303,8 +352,26 @@ class WindowFanCard extends HTMLElement {
       <div class="wfc-row">${speedLights}</div>
       ${pills.length ? `<div class="wfc-divider"></div><div class="wfc-pills">${pills.join("")}</div>` : ""}
       ${stats.length ? `<div class="wfc-stats">${stats.join("")}</div>` : ""}
+      ${cfg.managed ? '<div class="wfc-busy-note">Continuous automatic control • High speed</div>' : ''}
+      ${status ? `<div class="wfc-busy-note">${escapeHtml(status.state)}</div>` : ''}
+      ${deadlineText ? `<div class="wfc-busy-note">Next timed decision: ${escapeHtml(deadlineText)}</div>` : ''}
+      ${this._calibrationHtml(calibrationOpen)}
       ${this._busy ? `<div class="wfc-busy-note">Sending commands…</div>` : ""}
+      <div class="wfc-busy-note wfc-error" role="alert"></div>
     `;
+    this._root.querySelector(".wfc-error").textContent = this._error || validError || "";
+  }
+
+  _calibrationHtml(open) {
+    const prefix = this._config.calibration_prefix;
+    if (!prefix || !/^[a-z0-9_]+$/.test(prefix)) return "";
+    const rows = RANGE_KEYS.map(key => {
+      const entity = `input_number.${prefix}_watts_${key}`;
+      const value = this._hass.states[entity]?.state || "—";
+      const label = key === "off_below" ? "Off below" : key.replace(/_upper$/, " — upper limit").replaceAll("_", " ");
+      return `<button data-action="calibration" data-value="${entity}"><span>${label}</span><b>${escapeHtml(value)} W</b></button>`;
+    }).join("");
+    return `<details class="wfc-calibration" ${open ? 'open' : ''}><summary>Shared wattage calibration</summary>${rows}<p>Cool High starts at the Cool Med upper limit. Each boundary is exclusive. Tap a value to edit it in Home Assistant. These settings control both this card and its automation; keep the boundaries in increasing order.</p></details>`;
   }
 
   _statHtml(path, color, value, label) {
@@ -312,7 +379,7 @@ class WindowFanCard extends HTMLElement {
       <div class="wfc-stat">
         ${iconSvg(path, color, 18)}
         <div>
-          <div class="wfc-stat-value">${value}</div>
+          <div class="wfc-stat-value">${escapeHtml(value)}</div>
           <div class="wfc-stat-label">${label}</div>
         </div>
       </div>`;
@@ -321,11 +388,21 @@ class WindowFanCard extends HTMLElement {
   /** Presses the remote the exact number of times needed to reach the
    * target. Passing null for either axis leaves it where it is. */
   async _setState(targetMode, targetSpeed) {
+    if (this._busy) return;
     const cfg = this._config;
+    this._error = "";
     this._busy = true;
     this._render();
     try {
+      if (cfg.controller_script) {
+        if (cfg.managed && (targetMode === "circulate" || (targetSpeed && targetSpeed !== "high"))) return;
+        await this._hass.callService("script", cfg.controller_script.slice(7), {
+          event: "manual", target_function: targetMode || "",
+        });
+        return;
+      }
       let current = this._state();
+      if (current.on === null) throw new Error(current.reason);
 
       if (!current.on) {
         if (cfg.power_switch) {
@@ -334,10 +411,7 @@ class WindowFanCard extends HTMLElement {
           });
           await sleep(cfg.boot_delay * 1000);
         }
-        const reread = this._state();
-        // The fan always boots to cool/low; fall back to that if the power
-        // sensor hasn't caught up yet.
-        current = reread.on ? reread : { on: true, mode: "cool", speed: "low" };
+        current = await this._waitForState(st => st.on === true);
       }
 
       const mode = targetMode || current.mode;
@@ -347,10 +421,26 @@ class WindowFanCard extends HTMLElement {
 
       await this._press(cfg.mode_command, modePresses);
       await this._press(cfg.speed_command, speedPresses);
+      if (modePresses || speedPresses) {
+        await this._waitForState(st => st.on && st.mode === mode && st.speed === speed);
+      }
+    } catch (error) {
+      this._error = error.message || String(error);
     } finally {
       this._busy = false;
       this._render();
     }
+  }
+
+  async _waitForState(matches) {
+    const timeout = Number(this._config.feedback_timeout);
+    const deadline = Date.now() + (Number.isFinite(timeout) && timeout > 0 ? timeout : 20) * 1000;
+    do {
+      const state = this._state();
+      if (matches(state)) return state;
+      await sleep(250);
+    } while (Date.now() < deadline);
+    throw new Error("Fan state was not confirmed. Check the fan and power reading before trying again.");
   }
 
   async _press(command, times) {
@@ -365,12 +455,14 @@ class WindowFanCard extends HTMLElement {
   }
 
   _togglePower() {
+    if (this._config.managed) return;
     this._hass.callService("switch", "toggle", {
       entity_id: this._config.power_switch,
     });
   }
 
   _toggleOverride() {
+    if (this._config.managed) return;
     this._hass.callService("input_boolean", "toggle", {
       entity_id: this._config.override_boolean,
     });
@@ -380,11 +472,17 @@ class WindowFanCard extends HTMLElement {
 const EDITOR_SCHEMA = [
   { name: "name", selector: { text: {} } },
   { name: "power_sensor", selector: { entity: { domain: "sensor" } } },
+  { name: "controller_script", selector: { entity: { domain: "script" } } },
+  { name: "state_sensor", selector: { entity: { domain: "sensor" } } },
+  { name: "status_sensor", selector: { entity: { domain: "sensor" } } },
+  { name: "calibration_prefix", selector: { text: {} } },
+  { name: "managed", selector: { boolean: {} } },
   { name: "power_switch", selector: { entity: { domain: "switch" } } },
   { name: "remote", selector: { entity: { domain: "remote" } } },
   { name: "ir_device", selector: { text: {} } },
   { name: "mode_command", selector: { text: {} } },
   { name: "speed_command", selector: { text: {} } },
+  { name: "feedback_timeout", selector: { number: { min: 1, max: 120, mode: "box" } } },
   {
     name: "press_delay",
     selector: { number: { min: 0.5, max: 10, step: 0.5, mode: "box" } },
@@ -405,16 +503,22 @@ const EDITOR_SCHEMA = [
 const EDITOR_LABELS = {
   name: "Card name",
   power_sensor: "Smart plug power sensor (W)",
+  controller_script: "Shared controller script (optional)",
+  state_sensor: "Shared decoded fan state sensor",
+  status_sensor: "Controller status sensor",
+  calibration_prefix: "Shared calibration prefix (bedroom_fan or den_fan)",
+  managed: "Continuous automatic control at High speed",
   power_switch: "Smart plug switch (for power on/off)",
   remote: "IR remote entity",
   ir_device: 'IR device name (as learned, e.g. "Window Fan")',
   mode_command: "Mode/function toggle command",
   speed_command: "Speed toggle command",
+  feedback_timeout: "Seconds to wait for power feedback",
   press_delay: "Seconds between button presses",
   temperature_sensor: "Room temperature sensor (optional)",
   humidity_sensor: "Room humidity sensor (optional)",
   override_boolean: "Manual override helper (optional)",
-  watts: "Measured wattages",
+  watts: "Standalone measured wattages (linked packages use shared calibration)",
   off_below: "Off below (W)",
   exhaust_low: "Exhaust low (W)",
   exhaust_med: "Exhaust med (W)",
@@ -422,11 +526,15 @@ const EDITOR_LABELS = {
   cool_low: "Cool low (W)",
   cool_med: "Cool med (W)",
   cool_high: "Cool high (W)",
+  circulate_low: "Circulate low (W) — measure on your fan",
+  circulate_med: "Circulate med (W) — measure on your fan",
+  circulate_high: "Circulate high (W) — measure on your fan",
+  max_deviation: "Maximum difference from a measured state (W)",
 };
 
 class WindowFanCardEditor extends HTMLElement {
   setConfig(config) {
-    this._config = { watts: { ...DEFAULT_WATTS }, ...config };
+    this._config = { ...config, watts: { ...DEFAULT_WATTS, ...(config.watts || {}) } };
     this._render();
   }
 
@@ -474,4 +582,3 @@ console.info(
   "color:#fff;background:#3b82f6;font-weight:700",
   "color:#3b82f6;background:#222"
 );
-

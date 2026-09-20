@@ -1,0 +1,79 @@
+{# Pure decision: memory and deadlines are passed in, never mutate HA here. #}
+{% set p = namespace(mode='exhaust', cycle=cycle, end=cycle_end,
+  night=night, morning=morning, protection=protection,
+  sleep_end=sleep_end, morning_at=morning_at, reason='Exhaust: continuous ventilation') %}
+{% set overnight = clock >= bedtime_clock or clock < morning_clock %}
+{% set event_overnight = event_clock >= bedtime_clock or event_clock < morning_clock %}
+{% if morning_at < latest_morning %}
+  {% set p.morning_at = latest_morning %}
+  {% set p.night = false %}{% set p.morning = true %}
+  {% set p.cycle = 'normal' %}{% set p.end = 0 %}
+{% endif %}
+{% if p.night and (now_ts >= p.sleep_end or not overnight) %}
+  {% set p.night = false %}{% set p.morning = true %}
+  {% set p.cycle = 'normal' %}{% set p.end = 0 %}
+{% endif %}
+{% if overnight and event_overnight and (event == 'tv_off' or event == 'observed_cool' or
+    (event == 'manual' and requested == 'cool')) %}
+  {% set p.night = true %}{% set p.morning = false %}
+  {% set p.sleep_end = next_morning %}
+  {% set p.cycle = 'normal' %}{% set p.end = 0 %}
+{% endif %}
+{% if climate_valid and weather_valid %}
+  {% set gap = outside_rh - rh %}
+  {% if gap >= cfg.protect_on %}{% set p.protection = true %}
+  {% elif gap < cfg.protect_off %}{% set p.protection = false %}{% endif %}
+{% elif not weather_valid %}
+  {% set p.protection = true %}
+{% endif %}
+{% if p.night %}
+  {% set p.mode = 'cool' %}
+  {% set p.reason = 'Sleep lock: Cool / High until ' ~ cfg.morning_time %}
+{% elif not climate_valid %}
+  {% set p.mode = 'exhaust' %}
+  {% set p.cycle = 'normal' %}{% set p.end = 0 %}
+  {% set p.reason = 'Exhaust: climate reading missing, stale, or invalid' %}
+{% else %}
+  {% if p.morning and (rh <= cfg.dry_target or (rh <= cfg.dry_release and temp > cfg.cool_at)) %}
+    {% set p.morning = false %}
+  {% endif %}
+  {% set restricted = p.morning or p.protection or rh > cfg.dry_release %}
+  {% if p.cycle in ['burst', 'extension'] %}
+    {% if temp <= cfg.burst_stop or (p.cycle == 'extension' and rh >= cfg.extension_rh) %}
+      {% set p.cycle = 'recovery' %}{% set p.end = now_ts + cfg.recovery_minutes * 60 %}
+    {% elif now_ts >= p.end %}
+      {% if p.cycle == 'burst' and rh < cfg.extension_rh %}
+        {% set p.cycle = 'extension' %}{% set p.end = now_ts + cfg.burst_minutes * 60 %}
+      {% else %}
+        {% set p.cycle = 'recovery' %}{% set p.end = now_ts + cfg.recovery_minutes * 60 %}
+      {% endif %}
+    {% endif %}
+  {% endif %}
+  {% if p.cycle == 'recovery' and now_ts >= p.end %}
+    {% set p.cycle = 'normal' %}{% set p.end = 0 %}
+  {% endif %}
+  {% if p.cycle in ['burst', 'extension'] %}
+    {% set p.mode = 'cool' %}
+    {% set p.reason = 'Cooling burst' if p.cycle == 'burst' else 'Final cooling extension: humidity below ' ~ cfg.extension_rh ~ '%' %}
+  {% elif p.cycle == 'recovery' %}
+    {% set p.reason = 'Exhaust: required recovery between cooling bursts' %}
+  {% elif restricted %}
+    {% if temp > cfg.burst_at %}
+      {% set p.mode = 'cool' %}{% set p.cycle = 'burst' %}
+      {% set p.end = now_ts + cfg.burst_minutes * 60 %}
+      {% set p.reason = 'Cooling burst: bedroom above ' ~ cfg.burst_at ~ ' F' %}
+    {% else %}
+      {% set p.reason = 'Morning drying: aim for ' ~ cfg.dry_target ~ '% RH; warm-room release at ' ~ cfg.dry_release ~ '%' if p.morning else ('Exhaust: outdoor humidity protection' if p.protection else 'Exhaust: bedroom humidity above ' ~ cfg.dry_release ~ '%') %}
+    {% endif %}
+  {% elif rh > cfg.dry_release %}
+    {% set p.reason = 'Exhaust: bedroom humidity above ' ~ cfg.dry_release ~ '%' %}
+  {% elif temp >= cfg.cool_at or previous_mode == 'cool' or (event == 'manual' and requested == 'cool') %}
+    {% set p.mode = 'cool' %}
+    {% set p.reason = 'Cool: daytime control; humidity at or below ' ~ cfg.dry_release ~ '%' %}
+  {% endif %}
+  {% if event == 'manual' and requested == 'exhaust' and p.cycle == 'normal' %}
+    {% set p.mode = 'exhaust' %}{% set p.reason = 'Exhaust requested; automatic control remains active' %}
+  {% endif %}
+{% endif %}
+{{ dict(mode=p.mode, cycle=p.cycle, end=p.end, night=p.night, morning=p.morning,
+  protection=p.protection, sleep_end=p.sleep_end, morning_at=p.morning_at, reason=p.reason) }}
