@@ -1,0 +1,33 @@
+{% set p = namespace(mode='exhaust', cycle=cycle, end=cycle_end, reason='Exhaust: continuous ventilation') %}
+{% if not climate_valid %}
+  {% set p.cycle = 'normal' %}{% set p.end = 0 %}
+  {% set p.reason = 'Exhaust: climate reading missing, stale, or invalid' %}
+{% else %}
+  {% if p.cycle in ['burst', 'extended'] %}
+    {% if temp <= cfg.cool_stop or (p.cycle == 'extended' and rh > cfg.max_rh) %}
+      {% set p.cycle = 'recovery' %}{% set p.end = now_ts + cfg.recovery_minutes * 60 %}
+    {% elif now_ts >= p.end %}
+      {% if rh <= cfg.max_rh %}
+        {% set p.cycle = 'extended' %}{% set p.end = now_ts + cfg.burst_minutes * 60 %}
+      {% else %}
+        {% set p.cycle = 'recovery' %}{% set p.end = now_ts + cfg.recovery_minutes * 60 %}
+      {% endif %}
+    {% endif %}
+  {% endif %}
+  {% if p.cycle == 'recovery' and now_ts >= p.end %}
+    {% set p.cycle = 'normal' %}{% set p.end = 0 %}
+  {% endif %}
+  {% if p.cycle in ['burst', 'extended'] %}
+    {% set p.mode = 'cool' %}
+    {% set p.reason = 'Cooling: initial ' ~ cfg.burst_minutes ~ '-minute heat relief' if p.cycle == 'burst' else 'Continuing cooling: above ' ~ cfg.cool_stop ~ ' F and humidity at or below ' ~ cfg.max_rh ~ '%' %}
+  {% elif p.cycle == 'recovery' %}
+    {% set p.reason = 'Exhaust: required recovery between cooling bursts' %}
+  {% elif temp >= cfg.cool_at %}
+    {% set p.mode = 'cool' %}{% set p.cycle = 'burst' %}
+    {% set p.end = now_ts + cfg.burst_minutes * 60 %}
+    {% set p.reason = 'Cooling burst: den at or above ' ~ cfg.cool_at ~ ' F' %}
+  {% elif rh > cfg.max_rh %}
+    {% set p.reason = 'Exhaust: den humidity above ' ~ cfg.max_rh ~ '%' %}
+  {% endif %}
+{% endif %}
+{{ dict(mode=p.mode, cycle=p.cycle, end=p.end, reason=p.reason) }}
