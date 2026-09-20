@@ -1,0 +1,10 @@
+type: "custom:window-fan-card"
+name: "Bedroom Window Fan"
+power_sensor: "sensor.bedroom_fan_power"
+state_sensor: "sensor.bedroom_fan_state"
+controller_script: "script.bedroom_fan_set_state"
+status_sensor: "sensor.bedroom_fan_control_status"
+calibration_prefix: "bedroom_fan"
+managed: true
+temperature_sensor: "sensor.bedroom_temperature"
+humidity_sensor: "sensor.bedroom_humidity"

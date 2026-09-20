@@ -1,0 +1,10 @@
+type: "custom:window-fan-card"
+name: "Den Window Fan"
+power_sensor: "sensor.den_fan_power"
+state_sensor: "sensor.den_fan_state"
+controller_script: "script.den_fan_set_state"
+status_sensor: "sensor.den_fan_control_status"
+calibration_prefix: "den_fan"
+managed: true
+temperature_sensor: "sensor.den_temperature"
+humidity_sensor: "sensor.den_humidity"
