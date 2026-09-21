@@ -2,12 +2,12 @@
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Window Fan Control — Setup</title>
 <style>body{font:18px/1.6 system-ui,sans-serif;max-width:760px;margin:4rem auto;padding:0 1.5rem;color:#20323a;background:#f4f7f8}h1{line-height:1.15}a{color:#075f72}li{margin:.8rem 0}code{background:#e4ecef;padding:.15rem .3rem;border-radius:4px}.tag{color:#42626c}</style>
-<main><p class="tag">Window Fan Control · 1.2.0</p><h1>One observed state.<br>One shared controller.</h1>
+<main><p class="tag">Window Fan Control · 1.2.1</p><h1>Choose your fan.<br>The card connects the rest.</h1>
 <p>Configure a Broadlink-controlled window fan with measured power feedback and continuous climate control. Public packages contain generic placeholders.</p>
 <ol><li>Download the <a href="https://github.com/Tmatz27/HA-autos-for-me/releases/latest">latest release</a>.</li>
 <li>Set entity IDs, learned remote commands, schedule and thresholds in <code>build.py</code>, then run <code>python build.py</code>.</li>
 <li>Measure all nine fan states and configure shared calibration. Included wattage bands are examples.</li>
-<li>Replace existing fan packages, install the card JavaScript module, and use the matching generated card YAML.</li>
+<li>Replace existing fan packages and install the card JavaScript module. In the card editor, choose a detected fan under <strong>Fan</strong>. Calibration and display settings stay collapsed until needed.</li>
 <li>Check Home Assistant configuration, restart, refresh the dashboard, and observe operation.</li></ol>
 <p><a href="https://github.com/Tmatz27/HA-autos-for-me#install-or-upgrade">Complete installation instructions</a> · <a href="https://github.com/Tmatz27/HA-autos-for-me/blob/main/docs/CONTROL.md">Policies and calibration</a></p>
 <p>The former browser generator is retired. The versioned builder produces the current packages and updates every embedded hardware reference together. It runs locally and requires only Python's standard library.</p></main></html>
