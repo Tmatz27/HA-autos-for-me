@@ -227,6 +227,21 @@ class Tests(unittest.TestCase):
             walk(h.package)
             self.assertEqual(h.script['mode'],'queued')
             self.assertNotIn('off',h.script['fields']['target_function']['selector']['select']['options'])
+    def test_28_routine_evaluation_is_bounded(self):
+        for room in ['bedroom','den']:
+            h=Harness(room)
+            triggers=h.package['automation'][0]['triggers']
+            self.assertEqual(triggers,[{'trigger':'homeassistant','event':'start'},
+                {'trigger':'time_pattern','minutes':'/1'}])
+            self.assertEqual(h.package['automation'][0]['mode'],'single')
+            h.run(); previous=len(h.remote_calls)
+            for _ in range(5):
+                h.advance(60); h.run()
+            self.assertEqual(len(h.remote_calls),previous)
+        h=Harness('bedroom')
+        self.assertEqual(h.package['automation'][1]['triggers'][0]['trigger'],'state')
+        self.assertEqual(h.package['automation'][2]['triggers'][0]['trigger'],'state')
+
     def test_11_actual_driver_all_running_states(self):
         for room in ['bedroom','den']:
             for mode in build.MODES:
