@@ -9,7 +9,7 @@
  * Standalone mode needs no helpers. Managed mode shares package state and commands.
  */
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.2.1";
 
 const MODES = ["cool", "exhaust", "circulate"];
 const SPEEDS = ["low", "med", "high"];
@@ -81,7 +81,7 @@ function decodeWatts(watts, w) {
   if (MODES.some(mode => SPEEDS.some(speed => {
     const v = w[`${mode}_${speed}`];
     return v === null || v === "" || !Number.isFinite(Number(v)) || Number(v) < Number(w.off_below);
-  }))) return unknown("Measure all nine mode/speed wattages in card settings");
+  }))) return unknown("Calibration incomplete");
   let best = null;
   let bestDistance = Infinity;
   let tied = false;
@@ -127,46 +127,28 @@ class WindowFanCard extends HTMLElement {
     return document.createElement("window-fan-card-editor");
   }
 
-  static getStubConfig() {
-    return {
-      type: "custom:window-fan-card",
-      name: "Window Fan",
-      ir_device: "",
-      mode_command: "mode_toggle",
-      speed_command: "speed_toggle",
-      press_delay: 2,
-    };
+  static getStubConfig(hass) {
+    const fans = discoverFans(hass);
+    return { type: "custom:window-fan-card", name: "Window Fan", setup_mode: "package",
+      ...(fans.length === 1 ? { fan_package: fans[0].state_sensor } : {}) };
   }
 
   setConfig(config) {
-    if (!config.power_sensor) {
-      throw new Error("window-fan-card: 'power_sensor' is required");
-    }
-    if (!config.remote && !config.controller_script) {
-      throw new Error("window-fan-card: 'remote' is required");
-    }
-    if (!config.ir_device && !config.controller_script) {
-      throw new Error("window-fan-card: 'ir_device' is required");
-    }
-    if (config.controller_script && (!config.state_sensor || !/^script\.[a-z0-9_]+$/.test(config.controller_script))) {
-      throw new Error("A linked controller needs a script entity and its shared state sensor.");
-    }
-    if (config.managed && !config.controller_script) throw new Error("Managed control requires a controller script.");
-    this._config = {
-      name: "Window Fan",
-      mode_command: "mode_toggle",
-      speed_command: "speed_toggle",
-      press_delay: 2,
-      boot_delay: 4,
-      feedback_timeout: 20,
-      ...config,
-      watts: { ...DEFAULT_WATTS, ...(config.watts || {}) },
-    };
+    this._sourceConfig = { ...config };
+    this._resolveConfig();
     this._built = false;
+  }
+
+  _resolveConfig() {
+    this._config = { name: "Window Fan", mode_command: "mode_toggle", speed_command: "speed_toggle",
+      press_delay: 2, boot_delay: 4, feedback_timeout: 20,
+      ...resolveConfig(this._sourceConfig, this._hass),
+      watts: { ...DEFAULT_WATTS, ...(this._sourceConfig.watts || {}) } };
   }
 
   set hass(hass) {
     this._hass = hass;
+    if (this._sourceConfig) this._resolveConfig();
     this._render();
   }
 
@@ -252,7 +234,7 @@ class WindowFanCard extends HTMLElement {
     const headerColor = st.on ? MODE_META[st.mode].color : dim;
     const headerText = st.on
       ? `${MODE_META[st.mode].label} • ${SPEED_META[st.speed].label}`
-      : st.on === false ? "Off" : st.reason;
+      : st.on === false ? "Off" : "Unknown";
 
     const modeLights = MODES.map((mode) => {
       const meta = MODE_META[mode];
@@ -330,7 +312,6 @@ class WindowFanCard extends HTMLElement {
       ));
     }
 
-    const calibrationOpen = this._root.querySelector("details")?.open;
     const status = cfg.status_sensor ? this._hass.states[cfg.status_sensor] : null;
     const backendError = status?.attributes?.error;
     const validError = backendError && !["unknown", "unavailable"].includes(backendError) ? backendError : "";
@@ -352,26 +333,12 @@ class WindowFanCard extends HTMLElement {
       <div class="wfc-row">${speedLights}</div>
       ${pills.length ? `<div class="wfc-divider"></div><div class="wfc-pills">${pills.join("")}</div>` : ""}
       ${stats.length ? `<div class="wfc-stats">${stats.join("")}</div>` : ""}
-      ${cfg.managed ? '<div class="wfc-busy-note">Continuous automatic control • High speed</div>' : ''}
-      ${status ? `<div class="wfc-busy-note">${escapeHtml(status.state)}</div>` : ''}
-      ${deadlineText ? `<div class="wfc-busy-note">Next timed decision: ${escapeHtml(deadlineText)}</div>` : ''}
-      ${this._calibrationHtml(calibrationOpen)}
+      ${cfg.show_details && status ? `<div class="wfc-busy-note">${escapeHtml(status.state)}</div>` : ''}
+      ${cfg.show_details && deadlineText ? `<div class="wfc-busy-note">Until ${escapeHtml(deadlineText)}</div>` : ''}
       ${this._busy ? `<div class="wfc-busy-note">Sending commands…</div>` : ""}
       <div class="wfc-busy-note wfc-error" role="alert"></div>
     `;
     this._root.querySelector(".wfc-error").textContent = this._error || validError || "";
-  }
-
-  _calibrationHtml(open) {
-    const prefix = this._config.calibration_prefix;
-    if (!prefix || !/^[a-z0-9_]+$/.test(prefix)) return "";
-    const rows = RANGE_KEYS.map(key => {
-      const entity = `input_number.${prefix}_watts_${key}`;
-      const value = this._hass.states[entity]?.state || "—";
-      const label = key === "off_below" ? "Off below" : key.replace(/_upper$/, " — upper limit").replaceAll("_", " ");
-      return `<button data-action="calibration" data-value="${entity}"><span>${label}</span><b>${escapeHtml(value)} W</b></button>`;
-    }).join("");
-    return `<details class="wfc-calibration" ${open ? 'open' : ''}><summary>Shared wattage calibration</summary>${rows}<p>Cool High starts at the Cool Med upper limit. Each boundary is exclusive. Tap a value to edit it in Home Assistant. These settings control both this card and its automation; keep the boundaries in increasing order.</p></details>`;
   }
 
   _statHtml(path, color, value, label) {
@@ -394,13 +361,16 @@ class WindowFanCard extends HTMLElement {
     this._busy = true;
     this._render();
     try {
+      if (cfg.setup_mode === "package" && !cfg.controller_script) throw new Error("Select a fan in the card editor.");
       if (cfg.controller_script) {
+        if (!this._hass.states[cfg.controller_script]) throw new Error("Fan controller unavailable.");
         if (cfg.managed && (targetMode === "circulate" || (targetSpeed && targetSpeed !== "high"))) return;
         await this._hass.callService("script", cfg.controller_script.slice(7), {
           event: "manual", target_function: targetMode || "",
         });
         return;
       }
+      if (!cfg.remote || !cfg.ir_device || !cfg.power_sensor) throw new Error("Complete fan setup in the card editor.");
       let current = this._state();
       if (current.on === null) throw new Error(current.reason);
 
@@ -469,98 +439,188 @@ class WindowFanCard extends HTMLElement {
   }
 }
 
-const EDITOR_SCHEMA = [
-  { name: "name", selector: { text: {} } },
-  { name: "power_sensor", selector: { entity: { domain: "sensor" } } },
-  { name: "controller_script", selector: { entity: { domain: "script" } } },
-  { name: "state_sensor", selector: { entity: { domain: "sensor" } } },
-  { name: "status_sensor", selector: { entity: { domain: "sensor" } } },
-  { name: "calibration_prefix", selector: { text: {} } },
-  { name: "managed", selector: { boolean: {} } },
-  { name: "power_switch", selector: { entity: { domain: "switch" } } },
-  { name: "remote", selector: { entity: { domain: "remote" } } },
-  { name: "ir_device", selector: { text: {} } },
-  { name: "mode_command", selector: { text: {} } },
-  { name: "speed_command", selector: { text: {} } },
-  { name: "feedback_timeout", selector: { number: { min: 1, max: 120, mode: "box" } } },
-  {
-    name: "press_delay",
-    selector: { number: { min: 0.5, max: 10, step: 0.5, mode: "box" } },
-  },
-  { name: "temperature_sensor", selector: { entity: { domain: "sensor" } } },
-  { name: "humidity_sensor", selector: { entity: { domain: "sensor" } } },
-  { name: "override_boolean", selector: { entity: { domain: "input_boolean" } } },
-  {
-    name: "watts",
-    type: "expandable",
-    schema: Object.keys(DEFAULT_WATTS).map((key) => ({
-      name: key,
-      selector: { number: { min: 0, max: 500, step: 0.1, mode: "box" } },
-    })),
-  },
-];
+// Discover only package state sensors, never arbitrary sensors with similar names.
+function discoverFans(hass) {
+  return Object.entries(hass?.states || {}).flatMap(([id, entity]) => {
+    const a = entity.attributes || {};
+    const prefix = a.calibration_prefix;
+    if (!id.startsWith('sensor.') || !/^[a-z0-9_]+$/.test(prefix || '') ||
+        !/^sensor\.[a-z0-9_]+$/.test(a.power_sensor || '')) return [];
+    const script = a.controller_script || `script.${prefix}_set_state`;
+    if (!/^script\.[a-z0-9_]+$/.test(script) || !hass.states[script]) return [];
+    return [{ state_sensor: id, controller_script: script,
+      status_sensor: a.status_sensor || `sensor.${prefix}_control_status`,
+      calibration_prefix: prefix, power_sensor: a.power_sensor,
+      temperature_sensor: a.temperature_sensor, humidity_sensor: a.humidity_sensor,
+      label: (a.friendly_name || prefix.replaceAll('_', ' ')).replace(/ State$/i, '') }];
+  }).sort((a, b) => a.label.localeCompare(b.label));
+}
 
+function selectedFan(config, fans) {
+  if (config.setup_mode === 'standalone') return null;
+  if (config.fan_package) return fans.find(f => f.state_sensor === config.fan_package) || null;
+  const keys = ['state_sensor', 'controller_script', 'calibration_prefix', 'status_sensor', 'power_sensor'];
+  const hints = keys.filter(k => config[k]);
+  if (!hints.length) return null;
+  const matches = fans.filter(f => hints.every(k => f[k] === config[k]));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function resolveConfig(config = {}, hass) {
+  const fan = selectedFan(config, discoverFans(hass));
+  if (!fan) {
+    // A previously selected package must never fall back to direct remote commands.
+    if (config.fan_package || config.setup_mode === 'package') {
+      return { ...config, setup_mode: 'package', managed: true,
+        controller_script: undefined, state_sensor: config.fan_package || config.state_sensor };
+    }
+    return { ...config };
+  }
+  const { label, ...links } = fan;
+  return { ...config, ...links, fan_package: fan.state_sensor, setup_mode: 'package', managed: true,
+    temperature_sensor: config.temperature_sensor ?? fan.temperature_sensor,
+    humidity_sensor: config.humidity_sensor ?? fan.humidity_sensor };
+}
+
+function sensorField(name, kind, hass, selected) {
+  const units = { power: ['W'], temperature: ['°C', '°F'], humidity: ['%'] };
+  const ids = Object.entries(hass?.states || {}).filter(([id, s]) => id.startsWith('sensor.') &&
+    (s.attributes?.device_class === kind || (!s.attributes?.device_class &&
+      (kind !== 'humidity' || /humid/i.test(id + ' ' + (s.attributes?.friendly_name || ''))) &&
+      units[kind].includes(s.attributes?.unit_of_measurement)))).map(([id]) => id);
+  // Preserve an existing custom sensor even if its integration lacks metadata.
+  if (selected && !ids.includes(selected)) ids.push(selected);
+  return { name, selector: { entity: { include_entities: ids } } };
+}
+
+const WATT_SCHEMA = Object.keys(DEFAULT_WATTS).map(name => ({ name,
+  selector: { number: { min: 0, max: 500, step: 0.1, mode: 'box' } } }));
 const EDITOR_LABELS = {
-  name: "Card name",
-  power_sensor: "Smart plug power sensor (W)",
-  controller_script: "Shared controller script (optional)",
-  state_sensor: "Shared decoded fan state sensor",
-  status_sensor: "Controller status sensor",
-  calibration_prefix: "Shared calibration prefix (bedroom_fan or den_fan)",
-  managed: "Continuous automatic control at High speed",
-  power_switch: "Smart plug switch (for power on/off)",
-  remote: "IR remote entity",
-  ir_device: 'IR device name (as learned, e.g. "Window Fan")',
-  mode_command: "Mode/function toggle command",
-  speed_command: "Speed toggle command",
-  feedback_timeout: "Seconds to wait for power feedback",
-  press_delay: "Seconds between button presses",
-  temperature_sensor: "Room temperature sensor (optional)",
-  humidity_sensor: "Room humidity sensor (optional)",
-  override_boolean: "Manual override helper (optional)",
-  watts: "Standalone measured wattages (linked packages use shared calibration)",
-  off_below: "Off below (W)",
-  exhaust_low: "Exhaust low (W)",
-  exhaust_med: "Exhaust med (W)",
-  exhaust_high: "Exhaust high (W)",
-  cool_low: "Cool low (W)",
-  cool_med: "Cool med (W)",
-  cool_high: "Cool high (W)",
-  circulate_low: "Circulate low (W) — measure on your fan",
-  circulate_med: "Circulate med (W) — measure on your fan",
-  circulate_high: "Circulate high (W) — measure on your fan",
-  max_deviation: "Maximum difference from a measured state (W)",
+  name: 'Card name', power_sensor: 'Power sensor', temperature_sensor: 'Temperature',
+  humidity_sensor: 'Humidity', show_details: 'Show automation details',
+  power_switch: 'Power switch', remote: 'Remote', ir_device: 'Learned device name',
+  mode_command: 'Mode command', speed_command: 'Speed command', press_delay: 'Delay between presses (seconds)',
+  feedback_timeout: 'Feedback timeout (seconds)', override_boolean: 'Override helper',
+  off_below: 'Off below (W)', max_deviation: 'Allowed difference (W)',
 };
+for (const mode of MODES) for (const speed of SPEEDS) {
+  EDITOR_LABELS[`${mode}_${speed}`] = `${MODE_META[mode].label} ${SPEED_META[speed].label} (W)`;
+}
 
 class WindowFanCardEditor extends HTMLElement {
   setConfig(config) {
-    this._config = { ...config, watts: { ...DEFAULT_WATTS, ...(config.watts || {}) } };
+    this._config = { ...config };
     this._render();
   }
-
   set hass(hass) {
     this._hass = hass;
-    if (this._form) this._form.hass = hass;
+    this._render();
   }
-
-  _render() {
-    if (!this._form) {
-      this._form = document.createElement("ha-form");
-      this._form.schema = EDITOR_SCHEMA;
-      this._form.computeLabel = (s) => EDITOR_LABELS[s.name] || s.name;
-      this._form.addEventListener("value-changed", (ev) => {
-        this.dispatchEvent(
-          new CustomEvent("config-changed", {
-            detail: { config: ev.detail.value },
-            bubbles: true,
-            composed: true,
-          })
-        );
-      });
-      this.appendChild(this._form);
+  _emit(config) {
+    this._config = config;
+    this.dispatchEvent(new CustomEvent('config-changed', {
+      detail: { config }, bubbles: true, composed: true,
+    }));
+    this._render();
+  }
+  _choose(value) {
+    const config = { ...this._config };
+    // Clear related links as a unit; never carry one room's sensors into another.
+    for (const key of ['fan_package','state_sensor','controller_script','status_sensor',
+      'calibration_prefix','managed','temperature_sensor','humidity_sensor']) delete config[key];
+    if (value === 'standalone') {
+      config.setup_mode = 'standalone';
+    } else {
+      for (const key of ['power_sensor','power_switch','remote','ir_device','override_boolean','watts']) delete config[key];
+      config.setup_mode = 'package';
+      if (value) config.fan_package = value;
     }
-    if (this._hass) this._form.hass = this._hass;
-    this._form.data = this._config;
+    this._emit(config);
+  }
+  _form(schema, data, onChange) {
+    const form = document.createElement('ha-form');
+    form.hass = this._hass; form.schema = schema; form.data = data;
+    form.computeLabel = s => EDITOR_LABELS[s.name] || s.name;
+    form.addEventListener('value-changed', ev => { ev.stopPropagation(); onChange(ev.detail.value); });
+    return form;
+  }
+  _section(title, node, key) {
+    const details = document.createElement('details');
+    details.dataset.section = key;
+    details.open = this._openSections?.has(key) || false;
+    const summary = document.createElement('summary'); summary.textContent = title;
+    details.append(summary, node); this.appendChild(details);
+  }
+  _render() {
+    if (!this._config || !this._hass) return;
+    const fans = discoverFans(this._hass);
+    const fan = selectedFan(this._config, fans);
+    const standalone = this._config.setup_mode === 'standalone' ||
+      (!fan && !this._config.fan_package && this._config.setup_mode !== 'package' && !!this._config.remote);
+    const cfg = resolveConfig(this._config, this._hass);
+    // Keep forms/focus intact on ordinary sensor updates; rebuild only for config/discovery changes.
+    const signature = JSON.stringify([this._config, fans]);
+    if (signature === this._signature) {
+      for (const form of this.querySelectorAll('ha-form')) form.hass = this._hass;
+      return;
+    }
+    this._signature = signature;
+    this._openSections = new Set([...this.querySelectorAll('details[open]')].map(d => d.dataset.section));
+    this.replaceChildren();
+    const style = document.createElement('style');
+    style.textContent = 'window-fan-card-editor{display:block} window-fan-card-editor .fan-picker{display:block;margin:12px 0 20px} window-fan-card-editor select{display:block;box-sizing:border-box;width:100%;padding:16px;margin-top:8px;border:1px solid var(--divider-color,#666);border-radius:8px;background:var(--card-background-color,#fff);color:var(--primary-text-color,#222);font:inherit} window-fan-card-editor summary{padding:16px 0;cursor:pointer;font-weight:500} window-fan-card-editor details{border-top:1px solid var(--divider-color,#666);margin-top:12px} window-fan-card-editor .calibration-row{display:flex;justify-content:space-between;width:100%;padding:12px;margin:4px 0;border:0;border-radius:6px;background:var(--secondary-background-color,#eee);color:var(--primary-text-color,#222);font:inherit;cursor:pointer}';
+    this.appendChild(style);
+    const label = document.createElement('label'); label.className = 'fan-picker'; label.textContent = 'Fan';
+    const select = document.createElement('select'); select.setAttribute('aria-label', 'Fan');
+    const options = [{ value: '', label: fans.length ? 'Select a fan' : 'No fan packages found' },
+      ...fans.map(f => ({ value: f.state_sensor, label: f.label })), { value: 'standalone', label: 'Standalone remote' }];
+    if (this._config.fan_package && !fans.some(f => f.state_sensor === this._config.fan_package)) {
+      options.push({ value: this._config.fan_package, label: 'Selected fan unavailable' });
+    }
+    for (const item of options) { const option = document.createElement('option'); option.value = item.value; option.textContent = item.label; select.appendChild(option); }
+    select.value = standalone ? 'standalone' : fan?.state_sensor || this._config.fan_package || '';
+    select.addEventListener('change', () => this._choose(select.value));
+    label.appendChild(select); this.appendChild(label);
+    this.appendChild(this._form([{ name: 'name', selector: { text: {} } }], this._config,
+      value => this._emit({ ...this._config, name: value.name })));
+    if (!standalone && !fan) return;
+    const climate = ['temperature_sensor','humidity_sensor'];
+    const display = climate.map((key, i) => sensorField(key, i ? 'humidity' : 'temperature', this._hass, cfg[key]));
+    display.push({ name: 'show_details', selector: { boolean: {} } });
+    this._section('Display options', this._form(display, cfg, value => {
+      const next = { ...this._config, show_details: value.show_details };
+      for (const key of climate) next[key] = value[key] ?? '';
+      this._emit(next);
+    }), 'display');
+    if (fan) {
+      const calibration = document.createElement('div');
+      for (const key of RANGE_KEYS) {
+        const entity = `input_number.${fan.calibration_prefix}_watts_${key}`;
+        const button = document.createElement('button'); button.className = 'calibration-row';
+        button.textContent = (key === 'off_below' ? 'Off below' : key.replace('_upper',' upper limit').replaceAll('_',' '));
+        button.addEventListener('click', () => this.dispatchEvent(new CustomEvent('hass-more-info', {
+          detail: { entityId: entity }, bubbles: true, composed: true,
+        })));
+        calibration.appendChild(button);
+      }
+      this._section('Calibration', calibration, 'calibration');
+      return;
+    }
+    this._section('Remote setup', this._form([
+      sensorField('power_sensor','power',this._hass,cfg.power_sensor),
+      { name: 'remote', selector: { entity: { filter: { domain: 'remote' } } } },
+      { name: 'ir_device', selector: { text: {} } },
+      { name: 'power_switch', selector: { entity: { filter: { domain: 'switch' } } } },
+    ], cfg, value => this._emit({ ...this._config, ...value, setup_mode: 'standalone' })), 'remote');
+    this._section('Calibration', this._form(WATT_SCHEMA, { ...DEFAULT_WATTS, ...cfg.watts },
+      watts => this._emit({ ...this._config, watts })), 'calibration');
+    this._section('Advanced', this._form([
+      { name: 'mode_command', selector: { text: {} } },
+      { name: 'speed_command', selector: { text: {} } },
+      { name: 'press_delay', selector: { number: { min: 0.5, max: 10, step: 0.5, mode: 'box' } } },
+      { name: 'feedback_timeout', selector: { number: { min: 1, max: 120, mode: 'box' } } },
+      { name: 'override_boolean', selector: { entity: { filter: { domain: 'input_boolean' } } } },
+    ], cfg, value => this._emit({ ...this._config, ...value })), 'advanced');
   }
 }
 
