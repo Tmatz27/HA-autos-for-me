@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0
+
+- Replace the bedroom's overlapping night/morning/protection flags with one explicit phase (`sleep`, `dry`, `balance`) that solely owns the fan, published as `input_select.bedroom_fan_phase`.
+- Stop the fan oscillating once per minute. Cooling draws outdoor air and raises room humidity, so a single humidity threshold made Cool and Exhaust trigger each other; a 62-66% deadband now separates them and the mode defaults to whatever is already running.
+- Raise the minimum interval between mode changes from 3 to 20 minutes and apply it in every phase. It was previously skipped during sleep and morning drying, which is where the worst cycling occurred.
+- Start Sleep when the bedtime window opens with the TV already off. Previously that night ran the daytime policy, cycling the fan until morning.
+- Give up drying after 60 minutes without a 1-point humidity improvement and manage temperature instead; re-arm if the room becomes materially wetter.
+- Extend burst recovery to 20 minutes so no path can switch faster than the minimum hold.
+- Add simulation tests that drive consecutive evaluations with humidity feedback and assert the fan does not oscillate.
+
 ## 1.2.3
 
 - Fix manual selections being ignored by the den climate policy at ordinary room temperatures.

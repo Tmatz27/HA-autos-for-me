@@ -154,18 +154,34 @@ class Harness:
     @property
     def error(self): return self.states('input_text.'+self.prefix+'_error')
 
+def auto(h, key):
+    """Find an automation by id fragment so inserting one cannot break tests."""
+    for a in h.package['automation']:
+        if key in a['id']: return a
+    raise KeyError(key)
+
 class Tests(unittest.TestCase):
     def policy(self,room='bedroom',**overrides):
         h=Harness(room)
         ctx=dict(cfg=h.cfg,event='evaluate',requested='',now_ts=100000,clock='12:00:00',event_clock='12:00:00',
             bedtime_clock='22:00:00',morning_clock='06:00:00',latest_morning=90000,next_morning=176400,
             morning_at=90000,night=False,morning=False,protection=False,sleep_end=0,cycle='normal',cycle_end=0,
-            climate_valid=True,weather_valid=True,temp=72,rh=60,outside_temp=60,outside_rh=63,previous_mode='exhaust')
+            climate_valid=True,weather_valid=True,temp=72,rh=60,outside_temp=60,outside_rh=63,previous_mode='exhaust',
+            phase='balance',best_rh=100,best_at=100000,stalled=False,tv_off_now=False)
+        # The phase is the single owner; keep the legacy flags consistent with it.
+        if overrides.get('night'): overrides.setdefault('phase','sleep')
+        if overrides.get('morning'): overrides.setdefault('phase','dry')
         ctx.update(overrides)
         source=next(x['variables']['plan'] for x in h.script['sequence'] if 'plan' in x.get('variables',{}))
         return h.render(source,ctx)
-    def test_01_tv_already_off_at_window_start_does_not_start_sleep(self):
+    def test_01_window_opening_with_tv_off_starts_sleep(self):
+        # A plain evaluation must not start Sleep on its own...
         self.assertFalse(self.policy(clock='22:00:00',event_clock='22:00:00')['night'])
+        # ...but the bedtime check finding the TV already off must, otherwise the
+        # day policy runs all night and cycles the fan.
+        p=self.policy(event='bedtime_check',tv_off_now=True,clock='22:00:00',event_clock='22:00:00')
+        self.assertTrue(p['night']); self.assertEqual(p['mode'],'cool'); self.assertEqual(p['phase'],'sleep')
+        self.assertFalse(self.policy(event='bedtime_check',tv_off_now=False,clock='22:00:00')['night'])
     def test_02_actual_bedtime_events(self):
         for event in ['tv_off','observed_cool','manual']:
             p=self.policy(event=event,requested='cool',clock='22:30:00',event_clock='22:30:00',rh=85,outside_rh=96)
@@ -239,8 +255,8 @@ class Tests(unittest.TestCase):
                 h.advance(60); h.run()
             self.assertEqual(len(h.remote_calls),previous)
         h=Harness('bedroom')
-        self.assertEqual(h.package['automation'][1]['triggers'][0]['trigger'],'state')
-        self.assertEqual(h.package['automation'][2]['triggers'][0]['trigger'],'state')
+        self.assertEqual(auto(h,'continuous_control')['triggers'][1]['trigger'],'time_pattern')
+        self.assertEqual(auto(h,'manual_cool')['triggers'][0]['trigger'],'state')
 
     def test_11_actual_driver_all_running_states(self):
         for room in ['bedroom','den']:
@@ -300,11 +316,11 @@ class Tests(unittest.TestCase):
         self.assertEqual(h.states('input_select.den_fan_cycle'),'recovery'); self.assertEqual(h.mode,'exhaust')
     def test_20_tv_and_remote_attribution(self):
         h=Harness('bedroom')
-        tv=h.package['automation'][1]['conditions'][0]['value_template']
+        tv=auto(h,'tv_off')['conditions'][0]['value_template']
         for prior,wanted in [('on',True),('off',False),('standby',False),('unavailable',False),('unknown',False)]:
             self.assertEqual(h.render(tv,{'trigger':{'from_state':State(prior)}}),wanted)
         h.run(); h.helper('input_select','requested_mode','exhaust')
-        observer=h.package['automation'][2]['conditions'][0]['value_template']
+        observer=auto(h,'manual_cool')['conditions'][0]['value_template']
         trigger={'from_state':State('off'),'to_state':State('on',when=h.now+timedelta(seconds=20))}
         self.assertTrue(h.render(observer,{'trigger':trigger}))
         # A completed automation sequence records a timestamp after its own mode transition.
@@ -347,7 +363,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(h.states['binary_sensor.bedroom_fan_is_cool'].last_changed,edge)
         h.helper('input_select','requested_mode','cool')
         trigger={'from_state':State('off'),'to_state':h.states['binary_sensor.bedroom_fan_is_cool']}
-        self.assertTrue(h.render(h.package['automation'][2]['conditions'][0]['value_template'],{'trigger':trigger}))
+        self.assertTrue(h.render(auto(h,'manual_cool')['conditions'][0]['value_template'],{'trigger':trigger}))
 
 
     def test_29_change_only_reporting_does_not_expire(self):
@@ -371,7 +387,7 @@ class Tests(unittest.TestCase):
         h.helper('input_datetime','command_guard_until','unknown')
         h.advance(120); h.sensor('power',51)
         trigger={'to_state':h.states['binary_sensor.bedroom_fan_is_cool']}
-        predicate=h.package['automation'][2]['conditions'][0]['value_template']
+        predicate=auto(h,'manual_cool')['conditions'][0]['value_template']
         self.assertTrue(h.render(predicate,{'trigger':trigger}))
         h.put('input_datetime.bedroom_fan_command_guard_until','future',{'timestamp':h.now.timestamp()+60})
         self.assertFalse(h.render(predicate,{'trigger':trigger}))
@@ -379,7 +395,66 @@ class Tests(unittest.TestCase):
         p=self.policy(clock='23:00:00',event_clock='23:00:00',morning=True,rh=70)
         self.assertFalse(p['night']); self.assertIn('Night drying',p['reason'])
         p=self.policy(clock='23:00:00',event_clock='23:00:00',morning=True,rh=70,event='manual',requested='cool')
-        self.assertTrue(p['night']); self.assertIn('Sleep lock',p['reason'])
+        self.assertTrue(p['night']); self.assertIn('Sleep',p['reason'])
+    def _drive(self,minutes,temp,rh0,outside_rh,clock,phase='balance',rate=0.03,house_rh=57.0):
+        """Run consecutive one-minute evaluations with the physical feedback that
+        cooling pulls room humidity toward outdoor air and exhaust pulls it toward
+        drier house air. Applies the controller's minimum-hold the same way the
+        generated script does. Returns the mode changes that actually happened."""
+        h=Harness('bedroom')
+        src=next(x['variables']['plan'] for x in h.script['sequence'] if 'plan' in x.get('variables',{}))
+        hold=h.cfg['minimum_mode_seconds']
+        mem=dict(phase=phase,cycle='normal',cycle_end=0,night=(phase=='sleep'),morning=(phase=='dry'),
+            protection=False,sleep_end=(10**9 if phase=='sleep' else 0),morning_at=90000,
+            best_rh=rh0,best_at=100000,stalled=False)
+        rh,mode,now,last,changes=rh0,'exhaust',100000,0,[]
+        for _ in range(minutes):
+            p=h.render(src,dict(cfg=h.cfg,event='evaluate',requested='',now_ts=now,clock=clock,
+                event_clock=clock,tv_off_now=False,bedtime_clock='22:00:00',morning_clock='06:00:00',
+                latest_morning=90000,next_morning=10**9,climate_valid=True,weather_valid=True,
+                temp=temp,rh=rh,outside_temp=70,outside_rh=outside_rh,previous_mode=mode,**mem))
+            nxt=p['mode']
+            if nxt!=mode and p['phase']==mem['phase'] and p['cycle']==mem['cycle'] and now-last<hold:
+                nxt=mode
+            if nxt!=mode: changes.append(now-last); last=now
+            mode=nxt
+            for k in ['phase','cycle','night','morning','protection','sleep_end','morning_at','best_rh','best_at','stalled']:
+                mem[k]=p[k]
+            mem['cycle_end']=p['end']
+            rh+=((outside_rh if mode=='cool' else house_rh)-rh)*rate
+            rh=max(20.0,min(99.0,rh))
+            now+=60
+        return changes,rh,mem
+    def test_35_policy_does_not_oscillate_near_thresholds(self):
+        # Every one of these cycled the fan once a minute before the rewrite.
+        for label,kw in [('day warm',dict(temp=74,rh0=62,outside_rh=66,clock='14:00:00')),
+            ('day warm, wetter outside',dict(temp=74,rh0=62,outside_rh=69,clock='14:00:00')),
+            ('day mild',dict(temp=73,rh0=62,outside_rh=64,clock='14:00:00')),
+            ('overnight without sleep',dict(temp=74,rh0=70,outside_rh=76,clock='23:30:00')),
+            ('morning drying',dict(temp=74,rh0=68,outside_rh=72,clock='07:00:00',phase='dry'))]:
+            changes,_,_=self._drive(180,**kw)
+            self.assertLessEqual(len(changes),9,f'{label}: {len(changes)} mode changes in 3 h')
+            for gap in changes[1:]:
+                self.assertGreaterEqual(gap,self.hold(),f'{label}: switched after only {gap}s')
+    def hold(self):
+        return Harness('bedroom').cfg['minimum_mode_seconds']
+    def test_36_sleep_never_switches_mode(self):
+        changes,_,mem=self._drive(480,temp=74,rh0=85,outside_rh=96,clock='23:30:00',phase='sleep')
+        self.assertLessEqual(len(changes),1)   # at most the initial move to Cool
+        self.assertEqual(mem['phase'],'sleep')
+    def test_37_stalled_drying_gives_up_then_re_arms(self):
+        # House air as wet as outside: exhaust cannot dry, so drying must stop.
+        _,_,mem=self._drive(240,temp=74,rh0=72,outside_rh=95,clock='07:00:00',phase='dry',house_rh=94.0)
+        self.assertTrue(mem['stalled']); self.assertEqual(mem['phase'],'balance')
+        # A materially wetter room is a new situation; drying must be retried.
+        p=self.policy(phase='balance',stalled=True,best_rh=70,rh=73,temp=74)
+        self.assertFalse(p['stalled'])
+    def test_38_mode_is_held_when_nothing_demands_a_change(self):
+        # Inside the deadband the policy must keep whatever is already running.
+        for previous in ['cool','exhaust']:
+            p=self.policy(phase='balance',rh=64,temp=74,previous_mode=previous)
+            self.assertEqual(p['mode'],previous)
+            self.assertIn('Holding',p['reason'])
     def test_34_slow_changed_reports_can_complete(self):
         h=Harness('den',mode='cool',speed='low'); h.report_delay=45; h.run()
         self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('exhaust','high'))

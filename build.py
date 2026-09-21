@@ -66,27 +66,37 @@ def build(room):
     cfg=dict(h,outdoor_temperature='sensor.outdoor_temperature',outdoor_humidity='sensor.outdoor_humidity',
         power_command='',speed_command='speed_toggle',feedback_timeout=60,settle_seconds=2,
         retry_seconds=300,power_max_age=0,room_max_age=900,weather_max_age=7200,
-        manual_minutes=30,minimum_mode_seconds=180,burst_minutes=30,recovery_minutes=15)
+        manual_minutes=30,minimum_mode_seconds=1200,burst_minutes=30,recovery_minutes=20)
     if room=='bedroom': cfg.update(bedtime_time='22:00:00',morning_time='06:00:00',cool_at=73,
-        dry_target=60,dry_release=62,protect_on=15,protect_off=8,burst_at=75,burst_stop=73,extension_rh=64)
+        dry_target=60,dry_release=62,dry_resume=66,protect_on=15,protect_off=8,
+        burst_at=75,burst_stop=73,extension_rh=64,stall_minutes=60,stall_margin=1,
+        tv='media_player.bedtime_tv')
     else: cfg.update(cool_at=78,cool_stop=74,max_rh=70)
     booleans={'calibration_initialized':{'name':title+' Calibration Initialized'}}
     if room=='bedroom':
-        for k in ['night_phase','morning_recovery','humidity_protection']:
+        for k in ['night_phase','morning_recovery','humidity_protection','dry_stalled']:
             booleans[k]={'name':title+' '+k.replace('_',' ').title()}
     datetimes={k:{'name':title+' '+k.replace('_',' ').title(),'has_date':True,'has_time':True}
-               for k in ['last_command_time','command_guard_until','cycle_end','retry_after','manual_until']+(['sleep_until','last_morning'] if room=='bedroom' else [])}
-    package={
-      'input_boolean':{prefix+'_'+k:v for k,v in booleans.items()},
-      'input_datetime':{prefix+'_'+k:v for k,v in datetimes.items()},
-      'input_select':{
+               for k in ['last_command_time','command_guard_until','cycle_end','retry_after','manual_until']+(['sleep_until','last_morning','dry_best_at'] if room=='bedroom' else [])}
+    numbers={prefix+'_watts_'+key:{'name':title+' Watts '+key.replace('_',' ').title(),
+        'min':0,'max':500,'step':0.1,'mode':'box','unit_of_measurement':'W'} for key in BANDS}
+    if room=='bedroom':
+        numbers[prefix+'_dry_best_rh']={'name':title+' Dry Best Rh','min':0,'max':100,
+            'step':0.1,'mode':'box','unit_of_measurement':'%'}
+    selects={
          prefix+'_cycle':{'name':title+' Cycle','options':['normal','burst','extension' if room=='bedroom' else 'extended','recovery']},
          prefix+'_manual_mode':{'name':title+' Manual Mode','options':MODES},
          prefix+'_manual_speed':{'name':title+' Manual Speed','options':SPEEDS},
-         prefix+'_requested_mode':{'name':title+' Requested Mode','options':MODES}},
+         prefix+'_requested_mode':{'name':title+' Requested Mode','options':MODES}}
+    if room=='bedroom':
+        # One explicit owner of the fan at any moment; no overlapping flags.
+        selects[prefix+'_phase']={'name':title+' Phase','options':['sleep','dry','balance']}
+    package={
+      'input_boolean':{prefix+'_'+k:v for k,v in booleans.items()},
+      'input_datetime':{prefix+'_'+k:v for k,v in datetimes.items()},
+      'input_select':selects,
       'input_text':{prefix+'_'+k:{'name':title+' '+k.title(),'max':255} for k in ['reason','error']},
-      'input_number':{prefix+'_watts_'+key:{'name':title+' Watts '+key.replace('_',' ').title(),
-        'min':0,'max':500,'step':0.1,'mode':'box','unit_of_measurement':'W'} for key in BANDS}}
+      'input_number':numbers}
 
     bound_values=', '.join(state(ent('input_number','watts_'+key))+' | float(-1)' for key in BANDS)
     decoder="""{% set raw = states('POWER') %}
@@ -168,9 +178,14 @@ def build(room):
 {{ ns.ok and 0 <= rh <= 100 and -100 < temp < 150 }}""",
          weather_valid="{{ is_number(states(cfg.outdoor_humidity)) and 0 <= outside_rh <= 100 and now().timestamp() - as_timestamp(states[cfg.outdoor_humidity].last_reported, 0) <= cfg.weather_max_age }}")]
     if room=='bedroom':
-        seq.append(variables(night=template("is_state('"+ent('input_boolean','night_phase')+"','on')"),
+        seq.append(variables(phase=template(state(ent('input_select','phase'))),
+          night=template("is_state('"+ent('input_boolean','night_phase')+"','on')"),
           morning=template("is_state('"+ent('input_boolean','morning_recovery')+"','on')"),
           protection=template("is_state('"+ent('input_boolean','humidity_protection')+"','on')"),
+          stalled=template("is_state('"+ent('input_boolean','dry_stalled')+"','on')"),
+          best_rh=template(state(ent('input_number','dry_best_rh'))+' | float(100)'),
+          best_at=template(timestamp(ent('input_datetime','dry_best_at'))),
+          tv_off_now=template("states('"+cfg['tv']+"') in ['off','standby','unavailable']"),
           sleep_end=template(timestamp(ent('input_datetime','sleep_until'))),
           morning_at=template(timestamp(ent('input_datetime','last_morning'))),clock="{{ now().strftime('%H:%M:%S') }}",
           bedtime_clock='{{ cfg.bedtime_time }}',morning_clock='{{ cfg.morning_time }}',
@@ -201,9 +216,13 @@ def build(room):
       variables(plan=(ROOT/'templates'/f'{room}_policy.jinja').read_text()),
       iff('{{ manual_active }}',[variables(plan=template("dict(plan, mode="+state(ent('input_select','manual_mode'))+", cycle='normal', end=0, reason='Manual: ' ~ "+state(ent('input_select','manual_mode'))+" ~ ' / ' ~ desired_speed ~ '; Auto resumes after hold')"))])])
     if room=='bedroom':
-        seq.extend([set_bool(ent('input_boolean','night_phase'),'plan.night'),
+        seq.extend([action('input_select.select_option',ent('input_select','phase'),{'option':'{{ plan.phase }}'}),
+            set_bool(ent('input_boolean','night_phase'),'plan.night'),
             set_bool(ent('input_boolean','morning_recovery'),'plan.morning'),
             set_bool(ent('input_boolean','humidity_protection'),'plan.protection'),
+            set_bool(ent('input_boolean','dry_stalled'),'plan.stalled'),
+            action('input_number.set_value',ent('input_number','dry_best_rh'),{'value':template('[[plan.best_rh, 0] | max, 100] | min')}),
+            time_set(ent('input_datetime','dry_best_at'),'plan.best_at if plan.best_at > 0 else now_ts'),
             time_set(ent('input_datetime','sleep_until'),'plan.sleep_end if plan.sleep_end > 0 else now_ts'),
             time_set(ent('input_datetime','last_morning'),'[plan.morning_at, 1] | max')])
     seq.extend([action('input_select.select_option',ent('input_select','cycle'),{'option':'{{ plan.cycle }}'}),
@@ -212,7 +231,7 @@ def build(room):
        # Every queued request is evaluated anew. Throttle normal mode changes,
        # but never delay bedtime, morning start, burst/recovery transitions or manual requests.
        iff(template("event == 'evaluate' and not manual_active and plan.cycle == cycle and plan.mode != previous_mode and " +
-         ("not plan.night and not plan.morning and plan.morning_at == morning_at and not night and " if room=='bedroom' else '')+
+         ("plan.phase == phase and " if room=='bedroom' else '')+
          f"now_ts - ({timestamp(ent('input_datetime','last_command_time'))}) < cfg.minimum_mode_seconds and states('{prefix_state}') == previous_mode ~ '_high'"),[
            action('input_text.set_value',ent('input_text','reason'),{'value':'Waiting for minimum mode interval; reevaluating each minute'}),
            {'stop':'Avoid rapid changes between modes.'}]),
@@ -257,7 +276,7 @@ def build(room):
        action('input_text.set_value',ent('input_text','error'),{'value':''})])
     package['script']={prefix+'_set_state':{'alias':title+' - Serialized Controller','mode':'queued','max':5,'max_exceeded':'silent',
        'description':'All card and automation requests enter this queue. Automatic control uses High; manual selections hold for 30 minutes. Never turns the fan off.',
-       'fields':{'event':{'name':'Request source','selector':{'select':{'options':['evaluate','manual','resume_auto','tv_off','observed_cool']}}},
+       'fields':{'event':{'name':'Request source','selector':{'select':{'options':['evaluate','manual','resume_auto','tv_off','observed_cool','bedtime_check']}}},
          'target_function':{'name':'Manual mode request','selector':{'select':{'options':MODES}}},
          'target_speed':{'name':'Manual speed request','selector':{'select':{'options':SPEEDS}}}},
        'sequence':seq}}
@@ -268,8 +287,14 @@ def build(room):
     package['automation']=[primary]
     if room=='bedroom':
         package['automation'].extend([
+         # The window opening with the TV already off must also start Sleep,
+         # otherwise the day policy runs all night and cycles the fan.
+         {'alias':title+' - Bedtime Window Opens','id':prefix+'_bedtime_check_v2','mode':'single',
+          'triggers':[{'trigger':'time','at':cfg['bedtime_time']}],
+          'conditions':[condition("{{ states('"+cfg['tv']+"') in ['off','standby','unavailable'] }}")],
+          'actions':[action('script.'+prefix+'_set_state',data={'event':'bedtime_check'})]},
          {'alias':title+' - TV Turned Off','id':prefix+'_tv_off_v2','mode':'single',
-          'triggers':[{'trigger':'state','entity_id':'media_player.bedtime_tv','to':['off','standby','unavailable'],'for':{'seconds':10}}],
+          'triggers':[{'trigger':'state','entity_id':cfg['tv'],'to':['off','standby','unavailable'],'for':{'seconds':10}}],
           'conditions':[condition("{{ trigger.from_state is not none and trigger.from_state.state not in ['off','standby','unknown','unavailable'] }}")],
           'actions':[action('script.bedroom_fan_set_state',data={'event':'tv_off','event_at':'{{ as_timestamp(trigger.to_state.last_changed) }}'})]},
          {'alias':title+' - Manual Remote Cool','id':prefix+'_manual_cool_v2','mode':'single',

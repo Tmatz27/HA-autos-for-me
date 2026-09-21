@@ -198,6 +198,7 @@ script:
               - "resume_auto"
               - "tv_off"
               - "observed_cool"
+              - "bedtime_check"
       target_function:
         name: "Manual mode request"
         selector:
@@ -236,9 +237,9 @@ script:
             room_max_age: 900
             weather_max_age: 7200
             manual_minutes: 30
-            minimum_mode_seconds: 180
+            minimum_mode_seconds: 1200
             burst_minutes: 30
-            recovery_minutes: 15
+            recovery_minutes: 20
             cool_at: 78
             cool_stop: 74
             max_rh: 70

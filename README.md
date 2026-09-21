@@ -2,7 +2,7 @@
 
 A Home Assistant dashboard card and two configurable packages for a dual window fan controlled by a Broadlink remote. A smart plug supplies measured power feedback for all nine combinations of Cool, Exhaust and Circulate at Low, Medium and High speed.
 
-Version **1.2.3** restores all manual mode and speed controls with a 30-minute hold and Resume Auto. The packages provide shared calibration, confirmed toggle commands, and continuous High-speed bedroom/den policies. All entity IDs and hardware settings in this repository are examples. Configure them before installation.
+Version **1.3.0** rebuilds bedroom climate control around a single explicit phase, so only one rule owns the fan at a time. Earlier versions could switch the fan once a minute, because cooling draws humid outdoor air and a single humidity threshold made Cool and Exhaust trigger each other. Manual mode and speed controls, shared calibration and confirmed toggle commands are unchanged. All entity IDs and hardware settings in this repository are examples. Configure them before installation.
 
 ## Card setup
 
@@ -36,7 +36,7 @@ Use Home Assistant 2024.10 or newer for these packages; they use the [modern aut
      packages: !include_dir_named packages
    ```
 
-5. Install `dist/window-fan-card.js` as a JavaScript module dashboard resource, or update the existing HACS custom repository installation. The release includes the same `window-fan-card.js` asset. Keep one resource URL and hard-refresh the dashboard; the browser console should show 1.2.3.
+5. Install `dist/window-fan-card.js` as a JavaScript module dashboard resource, or update the existing HACS custom repository installation. The release includes the same `window-fan-card.js` asset. Keep one resource URL and hard-refresh the dashboard; the browser console should show 1.3.0.
 6. Run Home Assistant's configuration check and restart. Select the fan in the visual card editor, or use the short YAML from `examples/`. Verify that `sensor.bedroom_fan_state`, `sensor.den_fan_state` and the corresponding control-status sensors have the expected IDs; resolve any duplicate entity suffixes consistently.
 7. Observe the first complete control cycle and adjust calibration/timing to the fan and smart plug. Software tests do not replace checking the installation against physical equipment.
 
@@ -44,7 +44,7 @@ The packages and managed card should be upgraded together. The old setup generat
 
 ## Example policies
 
-The bedroom example uses a configurable **22:00–06:00** bedtime window. A TV transition to off/standby/unavailable or a manual Cool selection starts Cool/High until morning. A TV already off at the start of the window does not start Sleep. Morning begins Exhaust drying, followed by daytime temperature/humidity control with limited cooling bursts during humidity protection.
+The bedroom example runs one of three phases at a time, in a configurable **22:00–06:00** window. `sleep` locks Cool/High until morning and makes no mode changes at all; it starts from a TV transition to off/standby/unavailable, a manual Cool selection, or the window opening with the TV already off. `dry` exhausts each morning until humidity reaches target, giving up after an hour without progress. `balance` holds humidity inside a 62–66% deadband and cools when that will not add moisture. Every phase enforces a 20-minute minimum between mode changes, and a room above 75°F still earns a time-boxed cooling burst.
 
 The den example runs Exhaust/High continuously until room temperature reaches its cooling threshold. Cooling runs in timed bursts, ending early when the room cools sufficiently; acceptable indoor humidity permits extensions.
 

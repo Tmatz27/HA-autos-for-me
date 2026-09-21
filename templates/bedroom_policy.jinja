@@ -1,24 +1,48 @@
-{# Pure decision: memory and deadlines are passed in, never mutate HA here. #}
-{% set p = namespace(mode='exhaust', cycle=cycle, end=cycle_end,
-  night=night, morning=morning, protection=protection,
-  sleep_end=sleep_end, morning_at=morning_at, reason='Exhaust: continuous ventilation') %}
+{# Pure decision: memory and deadlines are passed in, never mutate HA here.
+
+   Exactly one phase owns the fan at any moment:
+     sleep   - locked to Cool/High, no humidity switching at all
+     dry     - exhaust to pull the room down to the humidity target
+     balance - hold humidity inside a deadband, cool when it is safe to
+
+   Mode defaults to whatever is already running. A decision to CHANGE has to
+   be made deliberately; nothing falls through to a different mode by accident. #}
+{% set valid_previous = previous_mode if previous_mode in ['cool', 'exhaust'] else 'exhaust' %}
+{% set p = namespace(phase=phase if phase in ['sleep', 'dry', 'balance'] else 'balance',
+  mode=valid_previous, cycle=cycle, end=cycle_end,
+  sleep_end=sleep_end, morning_at=morning_at,
+  best_rh=best_rh, best_at=best_at, stalled=stalled,
+  protection=protection, reason='') %}
 {% set overnight = clock >= bedtime_clock or clock < morning_clock %}
 {% set event_overnight = event_clock >= bedtime_clock or event_clock < morning_clock %}
+
+{# --- Phase transitions ------------------------------------------------- #}
+{# A new morning boundary has passed: start the day's drying run. #}
 {% if morning_at < latest_morning %}
   {% set p.morning_at = latest_morning %}
-  {% set p.night = false %}{% set p.morning = true %}
+  {% set p.phase = 'dry' %}
   {% set p.cycle = 'normal' %}{% set p.end = 0 %}
+  {% set p.stalled = false %}{% set p.best_rh = rh %}{% set p.best_at = now_ts %}
 {% endif %}
-{% if p.night and (now_ts >= p.sleep_end or not overnight) %}
-  {% set p.night = false %}{% set p.morning = true %}
+{# Sleep ends at the morning boundary or when the window closes. #}
+{% if p.phase == 'sleep' and (now_ts >= p.sleep_end or not overnight) %}
+  {% set p.phase = 'dry' %}
   {% set p.cycle = 'normal' %}{% set p.end = 0 %}
+  {% set p.stalled = false %}{% set p.best_rh = rh %}{% set p.best_at = now_ts %}
 {% endif %}
-{% if overnight and event_overnight and (event == 'tv_off' or event == 'observed_cool' or
-    (event == 'manual' and requested == 'cool')) %}
-  {% set p.night = true %}{% set p.morning = false %}
+{# Sleep starts on a real bedtime signal inside the window, or because the
+   bedtime check found the TV already off when the window opened. #}
+{% if overnight and ((event_overnight and (event == 'tv_off' or event == 'observed_cool'
+    or (event == 'manual' and requested == 'cool')))
+    or (event == 'bedtime_check' and tv_off_now)) %}
+  {% set p.phase = 'sleep' %}
   {% set p.sleep_end = next_morning %}
   {% set p.cycle = 'normal' %}{% set p.end = 0 %}
 {% endif %}
+
+{# --- Outdoor moisture protection (hysteresis) -------------------------- #}
+{# When outside is much wetter than the room, intake raises humidity, so
+   comfort cooling is suppressed. The hard temperature ceiling still fires. #}
 {% if climate_valid and weather_valid %}
   {% set gap = outside_rh - rh %}
   {% if gap >= cfg.protect_on %}{% set p.protection = true %}
@@ -26,19 +50,47 @@
 {% elif not weather_valid %}
   {% set p.protection = true %}
 {% endif %}
-{% if p.night %}
+
+{# --- Act on the phase --------------------------------------------------- #}
+{% if p.phase == 'sleep' %}
   {% set p.mode = 'cool' %}
-  {% set p.reason = 'Sleep lock: Cool / High until ' ~ cfg.morning_time %}
+  {% set p.cycle = 'normal' %}{% set p.end = 0 %}
+  {% set p.reason = 'Sleep: Cool / High locked until ' ~ cfg.morning_time %}
 {% elif not climate_valid %}
   {% set p.mode = 'exhaust' %}
   {% set p.cycle = 'normal' %}{% set p.end = 0 %}
   {% set p.reason = 'Exhaust: climate reading missing, stale, or invalid' %}
 {% else %}
-  {% if p.morning and (rh <= cfg.dry_target or (rh <= cfg.dry_release and temp > cfg.cool_at)) %}
-    {% set p.morning = false %}
+  {# Stall tracking. Drying only counts as progress if the room actually gets
+     drier; a long flat stretch means outside air is too wet to help. #}
+  {% if p.best_rh <= 0 or p.best_rh > 100 %}
+    {% set p.best_rh = rh %}{% set p.best_at = now_ts %}
   {% endif %}
-  {% set restricted = p.morning or p.protection or rh > cfg.dry_release %}
+  {% if rh <= p.best_rh - cfg.stall_margin %}
+    {% set p.best_rh = rh %}{% set p.best_at = now_ts %}
+  {% endif %}
+  {% if rh <= cfg.dry_target %}
+    {% set p.stalled = false %}
+  {% elif rh >= p.best_rh + 2 * cfg.stall_margin %}
+    {# The room got materially wetter, so this is no longer the situation we
+       gave up on. Re-arm and let drying have another go. #}
+    {% set p.stalled = false %}{% set p.best_rh = rh %}{% set p.best_at = now_ts %}
+  {% elif valid_previous == 'exhaust' and now_ts - p.best_at >= cfg.stall_minutes * 60 %}
+    {% set p.stalled = true %}
+  {% endif %}
+  {# Drying is done at the target, or early if humidity is already acceptable
+     in a warm room - there is nothing left to gain by exhausting. #}
+  {% if p.phase == 'dry' and (rh <= cfg.dry_target or p.stalled
+      or (rh <= cfg.dry_release and temp > cfg.cool_at)) %}
+    {% set p.phase = 'balance' %}
+  {% endif %}
+
+  {# Burst and recovery are timer-governed in both working phases. A burst that
+     ends with humidity still comfortable earns one extension rather than
+     handing back to exhaust and immediately asking to cool again. #}
   {% if p.cycle in ['burst', 'extension'] %}
+    {# An extension was granted because humidity was comfortable; if it climbs
+       back, end the extension early rather than keep adding moisture. #}
     {% if temp <= cfg.burst_stop or (p.cycle == 'extension' and rh >= cfg.extension_rh) %}
       {% set p.cycle = 'recovery' %}{% set p.end = now_ts + cfg.recovery_minutes * 60 %}
     {% elif now_ts >= p.end %}
@@ -52,28 +104,44 @@
   {% if p.cycle == 'recovery' and now_ts >= p.end %}
     {% set p.cycle = 'normal' %}{% set p.end = 0 %}
   {% endif %}
+
   {% if p.cycle in ['burst', 'extension'] %}
     {% set p.mode = 'cool' %}
     {% set p.reason = 'Cooling burst' if p.cycle == 'burst' else 'Final cooling extension: humidity below ' ~ cfg.extension_rh ~ '%' %}
   {% elif p.cycle == 'recovery' %}
+    {% set p.mode = 'exhaust' %}
     {% set p.reason = 'Exhaust: required recovery between cooling bursts' %}
-  {% elif restricted %}
-    {% if temp > cfg.burst_at %}
-      {% set p.mode = 'cool' %}{% set p.cycle = 'burst' %}
-      {% set p.end = now_ts + cfg.burst_minutes * 60 %}
-      {% set p.reason = 'Cooling burst: bedroom above ' ~ cfg.burst_at ~ ' F' %}
-    {% else %}
-      {% set p.reason = ('Night drying; waiting for bedtime selection. Aim for ' if overnight else 'Morning drying: aim for ') ~ cfg.dry_target ~ '% RH; warm-room release at ' ~ cfg.dry_release ~ '%' if p.morning else ('Exhaust: outdoor humidity protection' if p.protection else 'Exhaust: bedroom humidity above ' ~ cfg.dry_release ~ '%') %}
-    {% endif %}
-  {% elif rh > cfg.dry_release %}
-    {% set p.reason = 'Exhaust: bedroom humidity above ' ~ cfg.dry_release ~ '%' %}
-  {% elif temp >= cfg.cool_at or previous_mode == 'cool' or (event == 'manual' and requested == 'cool') %}
+  {% elif temp > cfg.burst_at %}
+    {% set p.mode = 'cool' %}{% set p.cycle = 'burst' %}
+    {% set p.end = now_ts + cfg.burst_minutes * 60 %}
+    {% set p.reason = 'Cooling burst: bedroom above ' ~ cfg.burst_at ~ ' F' %}
+  {% elif p.phase == 'dry' %}
+    {% set p.mode = 'exhaust' %}
+    {# Overnight here means bedtime never latched - say so rather than calling
+       2am "morning drying". #}
+    {% set p.reason = ('Night drying; waiting for bedtime selection. Aim for ' if overnight
+      else 'Morning drying: aim for ') ~ cfg.dry_target ~ '% RH' %}
+  {% elif rh >= cfg.dry_resume and not p.stalled %}
+    {% set p.mode = 'exhaust' %}
+    {% set p.reason = 'Exhaust: humidity back above ' ~ cfg.dry_resume ~ '%' %}
+  {% elif rh <= cfg.dry_release and temp >= cfg.cool_at and not p.protection %}
     {% set p.mode = 'cool' %}
-    {% set p.reason = 'Cool: daytime control; humidity at or below ' ~ cfg.dry_release ~ '%' %}
+    {% set p.reason = 'Cool: humidity at or below ' ~ cfg.dry_release ~ '%' %}
+  {% elif p.stalled and temp >= cfg.cool_at %}
+    {% set p.mode = 'cool' %}
+    {% set p.reason = 'Cool: drying made no progress for ' ~ cfg.stall_minutes ~ ' min; managing temperature instead' %}
+  {% elif p.protection and rh <= cfg.dry_release and temp >= cfg.cool_at %}
+    {% set p.reason = 'Holding ' ~ p.mode ~ ': outside is wetter than the room, so cooling would add moisture' %}
+  {% else %}
+    {% set p.reason = 'Holding ' ~ p.mode ~ ': humidity inside the ' ~ cfg.dry_release ~ '-' ~ cfg.dry_resume ~ '% deadband' %}
   {% endif %}
+
   {% if event == 'manual' and requested == 'exhaust' and p.cycle == 'normal' %}
-    {% set p.mode = 'exhaust' %}{% set p.reason = 'Exhaust requested; automatic control remains active' %}
+    {% set p.mode = 'exhaust' %}
+    {% set p.reason = 'Exhaust requested; automatic control remains active' %}
   {% endif %}
 {% endif %}
-{{ dict(mode=p.mode, cycle=p.cycle, end=p.end, night=p.night, morning=p.morning,
-  protection=p.protection, sleep_end=p.sleep_end, morning_at=p.morning_at, reason=p.reason) }}
+{{ dict(mode=p.mode, phase=p.phase, cycle=p.cycle, end=p.end,
+  night=(p.phase == 'sleep'), morning=(p.phase == 'dry'),
+  protection=p.protection, sleep_end=p.sleep_end, morning_at=p.morning_at,
+  best_rh=p.best_rh, best_at=p.best_at, stalled=p.stalled, reason=p.reason) }}
