@@ -63,7 +63,7 @@
       {% set p.end = now_ts + cfg.burst_minutes * 60 %}
       {% set p.reason = 'Cooling burst: bedroom above ' ~ cfg.burst_at ~ ' F' %}
     {% else %}
-      {% set p.reason = 'Morning drying: aim for ' ~ cfg.dry_target ~ '% RH; warm-room release at ' ~ cfg.dry_release ~ '%' if p.morning else ('Exhaust: outdoor humidity protection' if p.protection else 'Exhaust: bedroom humidity above ' ~ cfg.dry_release ~ '%') %}
+      {% set p.reason = ('Night drying; waiting for bedtime selection. Aim for ' if overnight else 'Morning drying: aim for ') ~ cfg.dry_target ~ '% RH; warm-room release at ' ~ cfg.dry_release ~ '%' if p.morning else ('Exhaust: outdoor humidity protection' if p.protection else 'Exhaust: bedroom humidity above ' ~ cfg.dry_release ~ '%') %}
     {% endif %}
   {% elif rh > cfg.dry_release %}
     {% set p.reason = 'Exhaust: bedroom humidity above ' ~ cfg.dry_release ~ '%' %}
