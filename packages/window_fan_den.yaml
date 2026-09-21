@@ -133,6 +133,10 @@ template:
         attributes:
           power_sensor: "sensor.den_fan_power"
           calibration_prefix: "den_fan"
+          controller_script: "script.den_fan_set_state"
+          status_sensor: "sensor.den_fan_control_status"
+          temperature_sensor: "sensor.den_temperature"
+          humidity_sensor: "sensor.den_humidity"
           off_below: "{{ states('input_number.den_fan_watts_off_below') | float(0) }}"
           exhaust_low_upper: "{{ states('input_number.den_fan_watts_exhaust_low_upper') | float(0) }}"
           exhaust_med_upper: "{{ states('input_number.den_fan_watts_exhaust_med_upper') | float(0) }}"
@@ -677,18 +681,6 @@ automation:
         event: "start"
       - trigger: "time_pattern"
         minutes: "/1"
-      - trigger: "state"
-        entity_id:
-          - "sensor.den_temperature"
-          - "sensor.den_humidity"
-          - "sensor.outdoor_temperature"
-          - "sensor.outdoor_humidity"
-        to: null
-      - trigger: "state"
-        entity_id: "sensor.den_fan_state"
-        to: null
-        for:
-          seconds: 12
     actions:
       - action: "script.den_fan_set_state"
         data:

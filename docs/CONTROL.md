@@ -39,7 +39,7 @@ Managed mode uses **one decoder**, shared between the card and controller. It cl
 
 The sample boundary values are `10, 32, 34.5, 37, 41, 44, 46, 48, 50` watts. Each boundary is exclusive for the lower band. Cool High is the final open-ended band. Measure each mode/speed and confirm that the ordering and separation fit the fan. This decoder is unsuitable if distinct states overlap in watts or use a different ordering; adjust the decoder before using such hardware.
 
-First run seeds `input_number.<room>_fan_watts_*` helpers from `BANDS` in the builder; subsequent restarts restore the edited helper values. Open **Shared wattage calibration** on the card to edit the helpers. Temporarily disable the fan's automations while measuring or adjusting multiple boundaries, then re-enable them. Non-numeric or non-increasing boundaries produce Unknown and block remote presses.
+First run seeds `input_number.<room>_fan_watts_*` helpers from `BANDS` in the builder; subsequent restarts restore the edited helper values. Open **Calibration** in the card editor to edit the helpers. Temporarily disable the fan's automations while measuring or adjusting multiple boundaries, then re-enable them. Non-numeric or non-increasing boundaries produce Unknown and block remote presses.
 
 The standalone card instead accepts nine measured wattages in its editor, a maximum deviation, and an Off threshold. It does not estimate Circulate from Cool/Exhaust. Supply all nine measurements before using it. Standalone remote actions should not run alongside a managed package; use the supplied managed card configurations for these packages.
 
@@ -52,7 +52,7 @@ The motor cycles must be independent:
 
 The controller reads observed state before each press and waits for a fresh report confirming the expected result. Defaults allow 30 seconds for feedback and two seconds of settling. Missing, stale or unconfirmed feedback stops further presses and displays the error. Automatic retries wait five minutes.
 
-Power readings must be no older than 120 seconds; indoor readings 15 minutes; outdoor humidity two hours. Freshness uses the most recent report, including unchanged values. Match these limits to device reporting intervals. Evaluation occurs each minute, on sensor changes, on settled state changes and on Home Assistant startup. There is a three-minute minimum interval for ordinary mode changes; bedtime, morning and burst/recovery transitions bypass it.
+Power readings must be no older than 120 seconds; indoor readings 15 minutes; outdoor humidity two hours. Freshness uses the most recent report, including unchanged values. Match these limits to device reporting intervals. Routine evaluation occurs once per minute and on Home Assistant startup. Climate and power sensor reports do not start additional routine runs. Bedtime events and card commands remain event-driven. Brief feedback polling occurs only while a command sequence is active. Room-threshold and recovery decisions can therefore take up to one minute to respond. There is a three-minute minimum interval for ordinary mode changes; bedtime, morning and burst/recovery transitions bypass it.
 
 The optional learned `power_command` starts blank. An off smart plug can be turned on, but if the plug is already on and the fan itself is off, configure that learned command or start the fan physically. No boot mode is assumed. The package never sends a fan-off request.
 
