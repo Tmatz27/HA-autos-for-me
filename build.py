@@ -107,6 +107,8 @@ def build(room):
   {{ match.value }}
 {% endif %}""".replace('POWER',h['power']).replace('BOUNDS',bound_values).replace('INIT',ent('input_boolean','calibration_initialized'))
     attrs={'power_sensor':h['power'],'calibration_prefix':prefix,
+        'controller_script':f'script.{prefix}_set_state','status_sensor':f'sensor.{prefix}_control_status',
+        'temperature_sensor':h['temperature'],'humidity_sensor':h['humidity'],
         **{key:template(state(ent('input_number','watts_'+key))+' | float(0)') for key in BANDS}}
     sensors=[{'name':title+' State','unique_id':prefix+'_state','icon':'mdi:fan','state':decoder,'attributes':attrs},
       {'name':title+' Control Status','unique_id':prefix+'_control_status','icon':'mdi:fan-auto',
@@ -234,9 +236,8 @@ def build(room):
          'target_function':{'name':'Manual mode request','selector':{'select':{'options':['cool','exhaust']}}}},
        'sequence':seq}}
     primary={'alias':title+' - Continuous Control','id':prefix+'_continuous_control_v2','mode':'single','max_exceeded':'silent',
-       'triggers':[{'trigger':'homeassistant','event':'start'}, {'trigger':'time_pattern','minutes':'/1'},
-          {'trigger':'state','entity_id':[h['temperature'],h['humidity'],cfg['outdoor_temperature'],cfg['outdoor_humidity']], 'to':None},
-          {'trigger':'state','entity_id':prefix_state,'to':None,'for':{'seconds':12}}],
+       # Routine decisions run once per minute, never on high-frequency sensor reports.
+       'triggers':[{'trigger':'homeassistant','event':'start'}, {'trigger':'time_pattern','minutes':'/1'}],
        'actions':[action('script.'+prefix+'_set_state',data={'event':'evaluate'})]}
     package['automation']=[primary]
     if room=='bedroom':
@@ -263,8 +264,5 @@ for room in HARDWARE:
 '''
     (DEST/f'window_fan_{room}.yaml').write_text(header+dump(package)+'\n',encoding='utf-8')
     (EXAMPLES/f'{room}-card.yaml').write_text(dump({'type':'custom:window-fan-card','name':room.title()+' Window Fan',
-       'power_sensor':HARDWARE[room]['power'],'state_sensor':f'sensor.{room}_fan_state',
-       'controller_script':f'script.{room}_fan_set_state','status_sensor':f'sensor.{room}_fan_control_status',
-       'calibration_prefix':f'{room}_fan','managed':True,'temperature_sensor':HARDWARE[room]['temperature'],
-       'humidity_sensor':HARDWARE[room]['humidity']})+'\n',encoding='utf-8')
+       'fan_package':f'sensor.{room}_fan_state','setup_mode':'package'})+'\n',encoding='utf-8')
 print('Built both packages and both card configurations.')
