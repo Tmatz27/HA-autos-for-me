@@ -64,8 +64,8 @@ def build(room):
     h=HARDWARE[room]; prefix=room+'_fan'; title=room.title()+' Fan'
     ent=lambda kind,key:f'{kind}.{prefix}_{key}'
     cfg=dict(h,outdoor_temperature='sensor.outdoor_temperature',outdoor_humidity='sensor.outdoor_humidity',
-        power_command='',speed_command='speed_toggle',feedback_timeout=30,settle_seconds=2,
-        retry_seconds=300,power_max_age=120,room_max_age=900,weather_max_age=7200,
+        power_command='',speed_command='speed_toggle',feedback_timeout=60,settle_seconds=2,
+        retry_seconds=300,power_max_age=0,room_max_age=900,weather_max_age=7200,
         minimum_mode_seconds=180,burst_minutes=30,recovery_minutes=15)
     if room=='bedroom': cfg.update(bedtime_time='22:00:00',morning_time='06:00:00',cool_at=73,
         dry_target=60,dry_release=62,protect_on=15,protect_off=8,burst_at=75,burst_stop=73,extension_rh=64)
@@ -75,7 +75,7 @@ def build(room):
         for k in ['night_phase','morning_recovery','humidity_protection']:
             booleans[k]={'name':title+' '+k.replace('_',' ').title()}
     datetimes={k:{'name':title+' '+k.replace('_',' ').title(),'has_date':True,'has_time':True}
-               for k in ['last_command_time','cycle_end','retry_after']+(['sleep_until','last_morning'] if room=='bedroom' else [])}
+               for k in ['last_command_time','command_guard_until','cycle_end','retry_after']+(['sleep_until','last_morning'] if room=='bedroom' else [])}
     package={
       'input_boolean':{prefix+'_'+k:v for k,v in booleans.items()},
       'input_datetime':{prefix+'_'+k:v for k,v in datetimes.items()},
@@ -132,8 +132,8 @@ def build(room):
            time_set(ent('input_datetime','retry_after'),'now().timestamp() + cfg.retry_seconds'),
            {'stop':message,'error':True}]
     def valid_power(after=None,expected=None):
-        q=f"is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('{prefix_state}') in {VALID!r} and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age"
-        if after: q+=f' and as_timestamp(states[cfg.power].last_reported, 0) > {after}'
+        q=f"is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('{prefix_state}') in {VALID!r} and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)"
+        if after: q+=f' and as_timestamp(states[cfg.power].last_updated, 0) > {after}'
         if expected: q+=f" and states('{prefix_state}') == {expected}"
         return template(q)
     prefix_state=ent('sensor','state')
@@ -141,7 +141,7 @@ def build(room):
         # Polling also observes unchanged-value state reports (last_reported).
         return [{'repeat':{'sequence':[{'delay':{'seconds':1}}],
           'until':[condition(template('('+predicate[3:-3]+') or now().timestamp() >= feedback_deadline'))]}},
-          iff(template('not ('+predicate[3:-3]+')'),failure('Fan feedback not confirmed; no further toggles sent. Check power readings and calibration.'))]
+          iff(template('not ('+predicate[3:-3]+')'),failure("{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor." + prefix + "_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"))]
 
     seq=[variables(cfg=cfg),
       iff(template("not is_state('"+ent('input_boolean','calibration_initialized')+"', 'on')"),[
@@ -194,11 +194,11 @@ def build(room):
            action('input_text.set_value',ent('input_text','reason'),{'value':'Waiting for minimum mode interval; reevaluating each minute'}),
            {'stop':'Avoid rapid changes between modes.'}]),
        action('input_select.select_option',ent('input_select','requested_mode'),{'option':'{{ plan.mode }}'}),
-       iff(template(f"now_ts < ({timestamp(ent('input_datetime','retry_after'))})"),[{'stop':'Waiting after an unconfirmed command; see controller error.'}]),
+       iff(template(f"event == 'evaluate' and now_ts < ({timestamp(ent('input_datetime','retry_after'))})"),[{'stop':'Waiting after an unconfirmed command; see controller error.'}]),
        variables(target_state="{{ plan.mode ~ '_high' }}"),
        iff(template(f"states('{prefix_state}') == target_state and "+valid_power()[3:-3]),[
            action('input_text.set_value',ent('input_text','error'),{'value':''}),{'stop':'Target already confirmed; no remote presses needed.'}]),
-       iff(template("not is_number(states(cfg.power)) or states(cfg.power) | float < 0 or now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0) > cfg.power_max_age"),failure('Power reading missing or stale; cannot safely calculate toggle presses.')),
+       iff(template("not is_number(states(cfg.power)) or states(cfg.power) | float < 0 or (cfg.power_max_age > 0 and now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0) > cfg.power_max_age)"),failure("{{ 'Power unavailable or expired: ' ~ cfg.power ~ ' = ' ~ states(cfg.power) ~ '. Check the plug power sensor.' }}")),
        iff(template(f"states('{prefix_state}') == 'off'"),[
           iff("{{ is_state(cfg.plug, 'off') }}",[
              action('switch.turn_on',h['plug']),{'delay':{'seconds':4}}]),
@@ -217,6 +217,7 @@ def build(room):
         return {'repeat':{'count':template(count),'sequence':[
           iff(template('not ('+valid_power()[3:-3]+')'),failure('Invalid power feedback before a remote press.')),
           variables(before_state=template(state(prefix_state))),variables(expected_state=template(expr),command_at='{{ now().timestamp() }}',feedback_deadline='{{ now().timestamp() + cfg.feedback_timeout }}'),
+          time_set(ent('input_datetime','command_guard_until'),'now().timestamp() + cfg.feedback_timeout + cfg.settle_seconds + 10'),
           action('remote.send_command',h['remote'],{'device':h['device'],'command':command},continue_on_error=True),
           {'delay':{'seconds':'{{ cfg.press_delay }}'}},
           *poll(valid_power('command_at','expected_state')),
@@ -228,6 +229,7 @@ def build(room):
        variables(speed_presses="{{ (speed_order.index('high') - speed_order.index(after_mode.split('_')[1])) % 3 }}"),
        press_loop('speed','speed_presses'),
        iff(template('not ('+valid_power(expected='target_state')[3:-3]+')'),failure('Final target was not confirmed.')),
+       time_set(ent('input_datetime','command_guard_until'),'now().timestamp()'),
        time_set(ent('input_datetime','last_command_time'),'now().timestamp()'),
        action('input_text.set_value',ent('input_text','error'),{'value':''})])
     package['script']={prefix+'_set_state':{'alias':title+' - Serialized Controller','mode':'queued','max':5,'max_exceeded':'silent',
@@ -248,7 +250,7 @@ def build(room):
           'actions':[action('script.bedroom_fan_set_state',data={'event':'tv_off','event_at':'{{ as_timestamp(trigger.to_state.last_changed) }}'})]},
          {'alias':title+' - Manual Remote Cool','id':prefix+'_manual_cool_v2','mode':'single',
           'triggers':[{'trigger':'state','entity_id':'binary_sensor.bedroom_fan_is_cool','from':'off','to':'on','for':{'seconds':8}}],
-          'conditions':[condition("{{ is_state('script.bedroom_fan_set_state','off') and states('input_text.bedroom_fan_error') in ['', 'unknown'] and as_timestamp(trigger.to_state.last_changed, 0) > (state_attr('input_datetime.bedroom_fan_last_command_time','timestamp') | float(0)) }}")],
+          'conditions':[condition("{{ is_state('script.bedroom_fan_set_state','off') and as_timestamp(trigger.to_state.last_changed, 0) > (state_attr('input_datetime.bedroom_fan_command_guard_until','timestamp') | float(0)) and as_timestamp(trigger.to_state.last_changed, 0) > (state_attr('input_datetime.bedroom_fan_last_command_time','timestamp') | float(0)) }}")],
           'actions':[action('script.bedroom_fan_set_state',data={'event':'observed_cool','event_at':'{{ as_timestamp(trigger.to_state.last_changed) }}'})]}])
     return package
 

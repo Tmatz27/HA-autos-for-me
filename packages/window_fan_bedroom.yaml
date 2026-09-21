@@ -19,6 +19,10 @@ input_datetime:
     name: "Bedroom Fan Last Command Time"
     has_date: true
     has_time: true
+  bedroom_fan_command_guard_until:
+    name: "Bedroom Fan Command Guard Until"
+    has_date: true
+    has_time: true
   bedroom_fan_cycle_end:
     name: "Bedroom Fan Cycle End"
     has_date: true
@@ -216,10 +220,10 @@ script:
             outdoor_humidity: "sensor.outdoor_humidity"
             power_command: ""
             speed_command: "speed_toggle"
-            feedback_timeout: 30
+            feedback_timeout: 60
             settle_seconds: 2
             retry_seconds: 300
-            power_max_age: 120
+            power_max_age: 0
             room_max_age: 900
             weather_max_age: 7200
             minimum_mode_seconds: 180
@@ -394,7 +398,7 @@ script:
                   {% set p.end = now_ts + cfg.burst_minutes * 60 %}
                   {% set p.reason = 'Cooling burst: bedroom above ' ~ cfg.burst_at ~ ' F' %}
                 {% else %}
-                  {% set p.reason = 'Morning drying: aim for ' ~ cfg.dry_target ~ '% RH; warm-room release at ' ~ cfg.dry_release ~ '%' if p.morning else ('Exhaust: outdoor humidity protection' if p.protection else 'Exhaust: bedroom humidity above ' ~ cfg.dry_release ~ '%') %}
+                  {% set p.reason = ('Night drying; waiting for bedtime selection. Aim for ' if overnight else 'Morning drying: aim for ') ~ cfg.dry_target ~ '% RH; warm-room release at ' ~ cfg.dry_release ~ '%' if p.morning else ('Exhaust: outdoor humidity protection' if p.protection else 'Exhaust: bedroom humidity above ' ~ cfg.dry_release ~ '%') %}
                 {% endif %}
               {% elif rh > cfg.dry_release %}
                 {% set p.reason = 'Exhaust: bedroom humidity above ' ~ cfg.dry_release ~ '%' %}
@@ -459,14 +463,14 @@ script:
           option: "{{ plan.mode }}"
       - if:
           - condition: "template"
-            value_template: "{{ now_ts < (state_attr('input_datetime.bedroom_fan_retry_after', 'timestamp') | float(0)) }}"
+            value_template: "{{ event == 'evaluate' and now_ts < (state_attr('input_datetime.bedroom_fan_retry_after', 'timestamp') | float(0)) }}"
         then:
           - stop: "Waiting after an unconfirmed command; see controller error."
       - variables:
           target_state: "{{ plan.mode ~ '_high' }}"
       - if:
           - condition: "template"
-            value_template: "{{ states('sensor.bedroom_fan_state') == target_state and is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age }}"
+            value_template: "{{ states('sensor.bedroom_fan_state') == target_state and is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) }}"
         then:
           - action: "input_text.set_value"
             target:
@@ -476,19 +480,19 @@ script:
           - stop: "Target already confirmed; no remote presses needed."
       - if:
           - condition: "template"
-            value_template: "{{ not is_number(states(cfg.power)) or states(cfg.power) | float < 0 or now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0) > cfg.power_max_age }}"
+            value_template: "{{ not is_number(states(cfg.power)) or states(cfg.power) | float < 0 or (cfg.power_max_age > 0 and now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0) > cfg.power_max_age) }}"
         then:
           - action: "input_text.set_value"
             target:
               entity_id: "input_text.bedroom_fan_error"
             data:
-              value: "Power reading missing or stale; cannot safely calculate toggle presses."
+              value: "{{ 'Power unavailable or expired: ' ~ cfg.power ~ ' = ' ~ states(cfg.power) ~ '. Check the plug power sensor.' }}"
           - action: "input_datetime.set_datetime"
             target:
               entity_id: "input_datetime.bedroom_fan_retry_after"
             data:
               timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-          - stop: "Power reading missing or stale; cannot safely calculate toggle presses."
+          - stop: "{{ 'Power unavailable or expired: ' ~ cfg.power ~ ' = ' ~ states(cfg.power) ~ '. Check the plug power sensor.' }}"
             error: true
       - if:
           - condition: "template"
@@ -522,26 +526,26 @@ script:
                     seconds: 1
               until:
                 - condition: "template"
-                  value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) or now().timestamp() >= feedback_deadline }}"
+                  value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) or now().timestamp() >= feedback_deadline }}"
           - if:
               - condition: "template"
-                value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) }}"
+                value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) }}"
             then:
               - action: "input_text.set_value"
                 target:
                   entity_id: "input_text.bedroom_fan_error"
                 data:
-                  value: "Fan feedback not confirmed; no further toggles sent. Check power readings and calibration."
+                  value: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.bedroom_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
               - action: "input_datetime.set_datetime"
                 target:
                   entity_id: "input_datetime.bedroom_fan_retry_after"
                 data:
                   timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-              - stop: "Fan feedback not confirmed; no further toggles sent. Check power readings and calibration."
+              - stop: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.bedroom_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
                 error: true
       - if:
           - condition: "template"
-            value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) }}"
+            value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) }}"
         then:
           - action: "input_text.set_value"
             target:
@@ -559,7 +563,7 @@ script:
           seconds: "{{ cfg.settle_seconds }}"
       - if:
           - condition: "template"
-            value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) }}"
+            value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) }}"
         then:
           - action: "input_text.set_value"
             target:
@@ -590,7 +594,7 @@ script:
           sequence:
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) }}"
+                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) }}"
               then:
                 - action: "input_text.set_value"
                   target:
@@ -610,6 +614,11 @@ script:
                 expected_state: "{{ mode_order[(mode_order.index(before_state.split('_')[0])+1)%3] ~ '_' ~ before_state.split('_')[1] }}"
                 command_at: "{{ now().timestamp() }}"
                 feedback_deadline: "{{ now().timestamp() + cfg.feedback_timeout }}"
+            - action: "input_datetime.set_datetime"
+              target:
+                entity_id: "input_datetime.bedroom_fan_command_guard_until"
+              data:
+                timestamp: "{{ now().timestamp() + cfg.feedback_timeout + cfg.settle_seconds + 10 }}"
             - action: "remote.send_command"
               target:
                 entity_id: "remote.bedroom_fan_remote"
@@ -625,28 +634,28 @@ script:
                       seconds: 1
                 until:
                   - condition: "template"
-                    value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age and as_timestamp(states[cfg.power].last_reported, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) or now().timestamp() >= feedback_deadline }}"
+                    value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) or now().timestamp() >= feedback_deadline }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age and as_timestamp(states[cfg.power].last_reported, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) }}"
+                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) }}"
               then:
                 - action: "input_text.set_value"
                   target:
                     entity_id: "input_text.bedroom_fan_error"
                   data:
-                    value: "Fan feedback not confirmed; no further toggles sent. Check power readings and calibration."
+                    value: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.bedroom_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
                 - action: "input_datetime.set_datetime"
                   target:
                     entity_id: "input_datetime.bedroom_fan_retry_after"
                   data:
                     timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-                - stop: "Fan feedback not confirmed; no further toggles sent. Check power readings and calibration."
+                - stop: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.bedroom_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
                   error: true
             - delay:
                 seconds: "{{ cfg.settle_seconds }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age and as_timestamp(states[cfg.power].last_reported, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) }}"
+                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) }}"
               then:
                 - action: "input_text.set_value"
                   target:
@@ -685,7 +694,7 @@ script:
           sequence:
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) }}"
+                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) }}"
               then:
                 - action: "input_text.set_value"
                   target:
@@ -705,6 +714,11 @@ script:
                 expected_state: "{{ before_state.split('_')[0] ~ '_' ~ speed_order[(speed_order.index(before_state.split('_')[1])+1)%3] }}"
                 command_at: "{{ now().timestamp() }}"
                 feedback_deadline: "{{ now().timestamp() + cfg.feedback_timeout }}"
+            - action: "input_datetime.set_datetime"
+              target:
+                entity_id: "input_datetime.bedroom_fan_command_guard_until"
+              data:
+                timestamp: "{{ now().timestamp() + cfg.feedback_timeout + cfg.settle_seconds + 10 }}"
             - action: "remote.send_command"
               target:
                 entity_id: "remote.bedroom_fan_remote"
@@ -720,28 +734,28 @@ script:
                       seconds: 1
                 until:
                   - condition: "template"
-                    value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age and as_timestamp(states[cfg.power].last_reported, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) or now().timestamp() >= feedback_deadline }}"
+                    value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) or now().timestamp() >= feedback_deadline }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age and as_timestamp(states[cfg.power].last_reported, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) }}"
+                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) }}"
               then:
                 - action: "input_text.set_value"
                   target:
                     entity_id: "input_text.bedroom_fan_error"
                   data:
-                    value: "Fan feedback not confirmed; no further toggles sent. Check power readings and calibration."
+                    value: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.bedroom_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
                 - action: "input_datetime.set_datetime"
                   target:
                     entity_id: "input_datetime.bedroom_fan_retry_after"
                   data:
                     timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-                - stop: "Fan feedback not confirmed; no further toggles sent. Check power readings and calibration."
+                - stop: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.bedroom_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
                   error: true
             - delay:
                 seconds: "{{ cfg.settle_seconds }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age and as_timestamp(states[cfg.power].last_reported, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) }}"
+                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.bedroom_fan_state') == expected_state) }}"
               then:
                 - action: "input_text.set_value"
                   target:
@@ -757,7 +771,7 @@ script:
                   error: true
       - if:
           - condition: "template"
-            value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age and states('sensor.bedroom_fan_state') == target_state) }}"
+            value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.bedroom_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and states('sensor.bedroom_fan_state') == target_state) }}"
         then:
           - action: "input_text.set_value"
             target:
@@ -771,6 +785,11 @@ script:
               timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
           - stop: "Final target was not confirmed."
             error: true
+      - action: "input_datetime.set_datetime"
+        target:
+          entity_id: "input_datetime.bedroom_fan_command_guard_until"
+        data:
+          timestamp: "{{ now().timestamp() }}"
       - action: "input_datetime.set_datetime"
         target:
           entity_id: "input_datetime.bedroom_fan_last_command_time"
@@ -827,7 +846,7 @@ automation:
           seconds: 8
     conditions:
       - condition: "template"
-        value_template: "{{ is_state('script.bedroom_fan_set_state','off') and states('input_text.bedroom_fan_error') in ['', 'unknown'] and as_timestamp(trigger.to_state.last_changed, 0) > (state_attr('input_datetime.bedroom_fan_last_command_time','timestamp') | float(0)) }}"
+        value_template: "{{ is_state('script.bedroom_fan_set_state','off') and as_timestamp(trigger.to_state.last_changed, 0) > (state_attr('input_datetime.bedroom_fan_command_guard_until','timestamp') | float(0)) and as_timestamp(trigger.to_state.last_changed, 0) > (state_attr('input_datetime.bedroom_fan_last_command_time','timestamp') | float(0)) }}"
     actions:
       - action: "script.bedroom_fan_set_state"
         data:

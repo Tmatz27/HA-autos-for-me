@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.2
+
+- Accept available numeric power from change-only reporting plugs; retain optional maximum report age and require a new matching power update after each toggle.
+- Allow up to 60 seconds for command feedback; show expected state, observed state and watts on failure.
+- Let explicit manual/bedtime requests retry immediately while retaining five-minute automatic retry spacing.
+- Restore physical-remote bedtime detection after prior errors, while guarding delayed feedback from controller commands.
+- Show Off and all nine calibration ranges with live wattages, including the shared Cool/High lower boundary.
+- Label overnight drying correctly and document the bedtime trigger after installation/restart.
+- Retain once-per-minute routine checks and existing climate goals.
+
 ## 1.2.1
 
 - Replace package wiring fields with one **Fan** selector showing only discovered fan packages.

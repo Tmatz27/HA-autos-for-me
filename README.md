@@ -2,7 +2,7 @@
 
 A Home Assistant dashboard card and two configurable packages for a dual window fan controlled by a Broadlink remote. A smart plug supplies measured power feedback for all nine combinations of Cool, Exhaust and Circulate at Low, Medium and High speed.
 
-Version **1.2.1** simplifies card setup to one detected fan selection. The packages provide shared calibration, confirmed toggle commands, and continuous High-speed bedroom/den policies. All entity IDs and hardware settings in this repository are examples. Configure them before installation.
+Version **1.2.2** fixes change-only power reporting, bedtime retries and calibration range visibility. The packages provide shared calibration, confirmed toggle commands, and continuous High-speed bedroom/den policies. All entity IDs and hardware settings in this repository are examples. Configure them before installation.
 
 ## Card setup
 
@@ -36,7 +36,7 @@ Use Home Assistant 2024.10 or newer for these packages; they use the [modern aut
      packages: !include_dir_named packages
    ```
 
-5. Install `dist/window-fan-card.js` as a JavaScript module dashboard resource, or update the existing HACS custom repository installation. The release includes the same `window-fan-card.js` asset. Keep one resource URL and hard-refresh the dashboard; the browser console should show 1.2.1.
+5. Install `dist/window-fan-card.js` as a JavaScript module dashboard resource, or update the existing HACS custom repository installation. The release includes the same `window-fan-card.js` asset. Keep one resource URL and hard-refresh the dashboard; the browser console should show 1.2.2.
 6. Run Home Assistant's configuration check and restart. Select the fan in the visual card editor, or use the short YAML from `examples/`. Verify that `sensor.bedroom_fan_state`, `sensor.den_fan_state` and the corresponding control-status sensors have the expected IDs; resolve any duplicate entity suffixes consistently.
 7. Observe the first complete control cycle and adjust calibration/timing to the fan and smart plug. Software tests do not replace checking the installation against physical equipment.
 
