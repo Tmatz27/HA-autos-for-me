@@ -26,7 +26,7 @@ function card() {
     power_switch:'switch.legacy',override_boolean:'input_boolean.legacy'});
   const error={textContent:''};
   c._root={querySelector:s=>s==='.wfc-error'?error:null}; c._built=true;
-  c._hass={states:{'script.bedroom_fan_set_state':{state:'off'},'sensor.power':{state:'36'},'sensor.bedroom_fan_state':{state:'cool_high'},
+  c._hass={states:{'script.bedroom_fan_set_state':{state:'off'},'sensor.power':{state:'36'},'sensor.bedroom_fan_state':{state:'cool_high',attributes:{manual_control:true}},
     'sensor.status':{state:'Sleep lock',attributes:{error:'IR not confirmed'}}},callService:async(...args)=>c.calls.push(args)};
   c.calls=[];return c;
 }
@@ -48,10 +48,22 @@ function card() {
   assert.equal(c.calls.length,1); assert.equal(c.calls[0][0],'script'); assert.equal(c.calls[0][1],'bedroom_fan_set_state');
   assert.equal(c.calls[0][2].event,'manual'); assert.equal(c.calls[0][2].target_function,'cool');
   await c._setState(null,'low'); await c._setState('circulate',null); c._togglePower(); c._toggleOverride();
-  assert.equal(c.calls.length,1);
-  await c._setState(null,'high'); assert.equal(c.calls[1][2].target_function,''); // speed correction alone must not start bedtime
-  await Promise.all([c._setState('cool',null),c._setState('exhaust',null)]);
   assert.equal(c.calls.length,3);
+  assert.equal(c.calls[1][2].target_speed,'low'); assert.equal(c.calls[1][2].target_function,'');
+  assert.equal(c.calls[2][2].target_function,'circulate'); assert.equal(c.calls[2][2].target_speed,'');
+  await c._setState(null,'high'); assert.equal(c.calls[3][2].target_function,'');
+  assert.equal(c.calls[3][2].target_speed,'high');
+  await Promise.all([c._setState('cool',null),c._setState('exhaust',null)]);
+  assert.equal(c.calls.length,5);
+  await c._resumeAuto(); assert.equal(c.calls[5][2].event,'resume_auto');
+  c._hass.states['sensor.status'].attributes.manual_until_timestamp=Date.now()/1000+1800;
+  c._render(); assert.ok(c._root.innerHTML.includes('Resume Auto'));
+  for(const mode of ['cool','exhaust','circulate']) assert.ok(c._root.innerHTML.includes('data-action="mode" data-value="'+mode+'"'));
+  for(const speed of ['low','med','high']) assert.ok(c._root.innerHTML.includes('data-action="speed" data-value="'+speed+'"'));
+  delete c._hass.states['sensor.bedroom_fan_state'].attributes.manual_control;
+  await c._setState('cool',null); assert.equal(c.calls.length,6);
+  assert.equal(c._error,'Update both fan packages to enable manual controls.');
+  c._hass.states['sensor.bedroom_fan_state'].attributes.manual_control=true;
   const fields=WATT_SCHEMA;
   assert.equal(fields.filter(x=>/^(cool|exhaust|circulate)_/.test(x.name)).length,9);
   const w={...DEFAULT_WATTS,circulate_low:39,circulate_med:42,circulate_high:54};
@@ -63,7 +75,7 @@ function card() {
   for(let i=0;i<20000;i++) states['sensor.unrelated_'+i]={state:'1',attributes:{device_class:'battery',unit_of_measurement:'%'}};
   for(const room of ['bedroom','den']) {
     states[`sensor.${room}_fan_state`]={state:'exhaust_high',attributes:{friendly_name:room+' Fan State',
-      calibration_prefix:room+'_fan',power_sensor:`sensor.${room}_power`,temperature_sensor:`sensor.${room}_temp`,humidity_sensor:`sensor.${room}_rh`}};
+      manual_control:true,calibration_prefix:room+'_fan',power_sensor:`sensor.${room}_power`,temperature_sensor:`sensor.${room}_temp`,humidity_sensor:`sensor.${room}_rh`}};
     states[`script.${room}_fan_set_state`]={state:'off',attributes:{}};
     states[`sensor.${room}_power`]={state:'36',attributes:{device_class:'power',unit_of_measurement:'W'}};
     states[`sensor.${room}_temp`]={state:'72',attributes:{device_class:'temperature',unit_of_measurement:'°F'}};
@@ -117,5 +129,5 @@ function card() {
   const before=c.calls.length;await c._setState('cool',null);assert.equal(c.calls.length,before);
   assert.equal(c._error,'Select a fan in the card editor.');
   console.log('PASS: package discovery among 20,000 unrelated sensors; partial-config repair; minimal config; filtered sensors; editor room switching; unavailable-package guard; uncluttered card.');
-  console.log('PASS: all nine shared states; managed service routing; manual bedtime intent; high-only controls; no Off; duplicate clicks; calibration fields; standalone decoding.');
+  console.log('PASS: all nine shared states; managed service routing; manual mode/speed payloads; Resume Auto; older-package guard; no Off; duplicate clicks; calibration fields; standalone decoding.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
