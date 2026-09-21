@@ -9,7 +9,7 @@
  * Standalone mode needs no helpers. Managed mode shares package state and commands.
  */
 
-const CARD_VERSION = "1.2.1";
+const CARD_VERSION = "1.2.2";
 
 const MODES = ["cool", "exhaust", "circulate"];
 const SPEEDS = ["low", "med", "high"];
@@ -537,6 +537,19 @@ class WindowFanCardEditor extends HTMLElement {
     }
     this._emit(config);
   }
+  _updateRanges() {
+    for (const row of this._rangeRows || []) {
+      const read = key => {
+        const raw = this._hass.states[`input_number.${row.prefix}_watts_${key}`]?.state;
+        return raw !== undefined && raw !== '' && Number.isFinite(Number(raw)) ? Number(raw) : null;
+      };
+      const lower = row.index > 0 ? read(RANGE_KEYS[row.index - 1]) : null;
+      const upper = row.index < RANGE_KEYS.length ? read(RANGE_KEYS[row.index]) : null;
+      row.value.textContent = row.index === 0 ? (upper === null ? 'Unavailable' : `< ${upper} W`)
+        : row.index === RANGE_KEYS.length ? (lower === null ? 'Unavailable' : `≥ ${lower} W`)
+        : lower === null || upper === null ? 'Unavailable' : `${lower} – < ${upper} W`;
+    }
+  }
   _form(schema, data, onChange) {
     const form = document.createElement('ha-form');
     form.hass = this._hass; form.schema = schema; form.data = data;
@@ -562,6 +575,7 @@ class WindowFanCardEditor extends HTMLElement {
     const signature = JSON.stringify([this._config, fans]);
     if (signature === this._signature) {
       for (const form of this.querySelectorAll('ha-form')) form.hass = this._hass;
+      this._updateRanges();
       return;
     }
     this._signature = signature;
@@ -594,15 +608,23 @@ class WindowFanCardEditor extends HTMLElement {
     }), 'display');
     if (fan) {
       const calibration = document.createElement('div');
-      for (const key of RANGE_KEYS) {
-        const entity = `input_number.${fan.calibration_prefix}_watts_${key}`;
+      this._rangeRows = [];
+      const keys = [...RANGE_KEYS, 'cool_high'];
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        const helperKey = key === 'cool_high' ? 'cool_med_upper' : key;
+        const entity = `input_number.${fan.calibration_prefix}_watts_${helperKey}`;
         const button = document.createElement('button'); button.className = 'calibration-row';
-        button.textContent = (key === 'off_below' ? 'Off below' : key.replace('_upper',' upper limit').replaceAll('_',' '));
+        const label = document.createElement('span');
+        label.textContent = i === 0 ? 'Off' : key.replace('_upper','').split('_').map(x => x[0].toUpperCase()+x.slice(1)).join(' / ');
+        const value = document.createElement('span'); button.append(label, value);
         button.addEventListener('click', () => this.dispatchEvent(new CustomEvent('hass-more-info', {
           detail: { entityId: entity }, bubbles: true, composed: true,
         })));
+        this._rangeRows.push({value, index:i, prefix:fan.calibration_prefix});
         calibration.appendChild(button);
       }
+      this._updateRanges();
       this._section('Calibration', calibration, 'calibration');
       return;
     }
