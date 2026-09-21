@@ -9,7 +9,7 @@
  * Standalone mode needs no helpers. Managed mode shares package state and commands.
  */
 
-const CARD_VERSION = "1.2.2";
+const CARD_VERSION = "1.2.3";
 
 const MODES = ["cool", "exhaust", "circulate"];
 const SPEEDS = ["low", "med", "high"];
@@ -197,6 +197,8 @@ class WindowFanCard extends HTMLElement {
           .wfc-stat-label { font-size:11px; color: var(--secondary-text-color); }
           .wfc.busy { opacity:.55; pointer-events:none; }
           .wfc-light.disabled { cursor:default; opacity:.5; }
+          .wfc-manual-row { display:flex; justify-content:center; align-items:center; gap:12px; margin-top:14px; font-size:13px; color:var(--secondary-text-color); }
+          .wfc-manual-row button { border:1px solid var(--divider-color); border-radius:16px; padding:6px 12px; background:transparent; color:var(--primary-text-color); cursor:pointer; font:inherit; }
           .wfc-calibration { margin-top:14px; font-size:12px; }
           .wfc-calibration summary { cursor:pointer; padding:8px 0; }
           .wfc-calibration button { display:flex; justify-content:space-between; width:100%; padding:9px; margin:3px 0; border:0; border-radius:6px; color:var(--primary-text-color); background:rgba(127,127,127,.08); cursor:pointer; }
@@ -214,6 +216,7 @@ class WindowFanCard extends HTMLElement {
       const { action, value } = el.dataset;
       if (action === "mode") this._setState(value, null);
       else if (action === "speed") this._setState(null, value);
+      else if (action === "resume") this._resumeAuto();
       else if (action === "power") this._togglePower();
       else if (action === "override") this._toggleOverride();
       else if (action === "calibration") this.dispatchEvent(new CustomEvent("hass-more-info", {
@@ -241,7 +244,7 @@ class WindowFanCard extends HTMLElement {
       const active = st.on && st.mode === mode;
       const bg = active ? `${meta.color}38` : "rgba(127,127,127,.08)";
       const glow = active ? `box-shadow:0 0 14px 3px ${meta.color}a6;` : "";
-      const disabled = cfg.managed && mode === "circulate";
+      const disabled = false;
       return `
         <div class="wfc-light${disabled ? " disabled" : ""}" ${disabled ? 'aria-disabled="true"' : 'data-action="mode"'} data-value="${mode}">
           <div class="wfc-dot" style="background:${bg};${glow}">
@@ -256,7 +259,7 @@ class WindowFanCard extends HTMLElement {
       const active = st.on && st.speed === speed;
       const bg = active ? `${meta.color}38` : "rgba(127,127,127,.08)";
       const glow = active ? `box-shadow:0 0 12px 2px ${meta.color}a6;` : "";
-      const disabled = cfg.managed && speed !== "high";
+      const disabled = false;
       return `
         <div class="wfc-light${disabled ? " disabled" : ""}" ${disabled ? 'aria-disabled="true"' : 'data-action="speed"'} data-value="${speed}">
           <div class="wfc-dot sm" style="background:${bg};${glow}">
@@ -335,6 +338,9 @@ class WindowFanCard extends HTMLElement {
       ${stats.length ? `<div class="wfc-stats">${stats.join("")}</div>` : ""}
       ${cfg.show_details && status ? `<div class="wfc-busy-note">${escapeHtml(status.state)}</div>` : ''}
       ${cfg.show_details && deadlineText ? `<div class="wfc-busy-note">Until ${escapeHtml(deadlineText)}</div>` : ''}
+      ${cfg.managed ? `<div class="wfc-manual-row">${Number(status?.attributes?.manual_until_timestamp) > Date.now()/1000
+        ? `<span>Manual · ${Math.ceil((Number(status.attributes.manual_until_timestamp)-Date.now()/1000)/60)} min</span><button type="button" data-action="resume">Resume Auto</button>`
+        : '<span>Auto</span>'}</div>` : ''}
       ${this._busy ? `<div class="wfc-busy-note">Sending commands…</div>` : ""}
       <div class="wfc-busy-note wfc-error" role="alert"></div>
     `;
@@ -364,9 +370,9 @@ class WindowFanCard extends HTMLElement {
       if (cfg.setup_mode === "package" && !cfg.controller_script) throw new Error("Select a fan in the card editor.");
       if (cfg.controller_script) {
         if (!this._hass.states[cfg.controller_script]) throw new Error("Fan controller unavailable.");
-        if (cfg.managed && (targetMode === "circulate" || (targetSpeed && targetSpeed !== "high"))) return;
+        if (cfg.managed && this._hass.states[cfg.state_sensor]?.attributes?.manual_control !== true) throw new Error("Update both fan packages to enable manual controls.");
         await this._hass.callService("script", cfg.controller_script.slice(7), {
-          event: "manual", target_function: targetMode || "",
+          event: "manual", target_function: targetMode || "", target_speed: targetSpeed || "",
         });
         return;
       }
@@ -400,6 +406,15 @@ class WindowFanCard extends HTMLElement {
       this._busy = false;
       this._render();
     }
+  }
+
+  async _resumeAuto() {
+    if (this._busy || !this._config.controller_script) return;
+    this._busy = true; this._error = ''; this._render();
+    try {
+      await this._hass.callService('script', this._config.controller_script.slice(7), {event:'resume_auto'});
+    } catch (error) { this._error = error.message || String(error); }
+    finally { this._busy = false; this._render(); }
   }
 
   async _waitForState(matches) {

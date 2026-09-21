@@ -25,6 +25,10 @@ input_datetime:
     name: "Den Fan Retry After"
     has_date: true
     has_time: true
+  den_fan_manual_until:
+    name: "Den Fan Manual Until"
+    has_date: true
+    has_time: true
 input_select:
   den_fan_cycle:
     name: "Den Fan Cycle"
@@ -33,11 +37,24 @@ input_select:
       - "burst"
       - "extended"
       - "recovery"
+  den_fan_manual_mode:
+    name: "Den Fan Manual Mode"
+    options:
+      - "cool"
+      - "exhaust"
+      - "circulate"
+  den_fan_manual_speed:
+    name: "Den Fan Manual Speed"
+    options:
+      - "low"
+      - "med"
+      - "high"
   den_fan_requested_mode:
     name: "Den Fan Requested Mode"
     options:
-      - "exhaust"
       - "cool"
+      - "exhaust"
+      - "circulate"
 input_text:
   den_fan_reason:
     name: "Den Fan Reason"
@@ -137,6 +154,7 @@ template:
         attributes:
           power_sensor: "sensor.den_fan_power"
           calibration_prefix: "den_fan"
+          manual_control: true
           controller_script: "script.den_fan_set_state"
           status_sensor: "sensor.den_fan_control_status"
           temperature_sensor: "sensor.den_temperature"
@@ -155,6 +173,8 @@ template:
         icon: "mdi:fan-auto"
         state: "{{ states('input_text.den_fan_reason') }}"
         attributes:
+          manual_until_timestamp: "{{ state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0) }}"
+          manual_active: "{{ state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0) > now().timestamp() }}"
           error: "{{ states('input_text.den_fan_error') }}"
           requested_mode: "{{ states('input_select.den_fan_requested_mode') }}"
           cycle: "{{ states('input_select.den_fan_cycle') }}"
@@ -166,7 +186,7 @@ script:
     mode: "queued"
     max: 5
     max_exceeded: "silent"
-    description: "All card and automation requests enter this queue. Always enforces High; never turns the fan off."
+    description: "All card and automation requests enter this queue. Automatic control uses High; manual selections hold for 30 minutes. Never turns the fan off."
     fields:
       event:
         name: "Request source"
@@ -175,6 +195,7 @@ script:
             options:
               - "evaluate"
               - "manual"
+              - "resume_auto"
               - "tv_off"
               - "observed_cool"
       target_function:
@@ -184,6 +205,15 @@ script:
             options:
               - "cool"
               - "exhaust"
+              - "circulate"
+      target_speed:
+        name: "Manual speed request"
+        selector:
+          select:
+            options:
+              - "low"
+              - "med"
+              - "high"
     sequence:
       - variables:
           cfg:
@@ -205,6 +235,7 @@ script:
             power_max_age: 0
             room_max_age: 900
             weather_max_age: 7200
+            manual_minutes: 30
             minimum_mode_seconds: 180
             burst_minutes: 30
             recovery_minutes: 15
@@ -266,8 +297,9 @@ script:
           - delay:
               seconds: 1
       - variables:
-          event: "{{ event | default('manual' if target_function is defined else 'evaluate') }}"
+          event: "{{ event | default('manual' if target_function is defined or target_speed is defined else 'evaluate') }}"
           requested: "{{ target_function | default('') }}"
+          requested_speed: "{{ target_speed | default('') }}"
           now_ts: "{{ now().timestamp() }}"
           temp: "{% set v = states(cfg.temperature) %}{{ (v | float * 9 / 5 + 32 if state_attr(cfg.temperature, 'unit_of_measurement') == '°C' else v | float) if is_number(v) else 0 }}"
           rh: "{{ states(cfg.humidity) | float(0) }}"
@@ -286,6 +318,75 @@ script:
             {% endfor %}
             {{ ns.ok and 0 <= rh <= 100 and -100 < temp < 150 }}
           weather_valid: "{{ is_number(states(cfg.outdoor_humidity)) and 0 <= outside_rh <= 100 and now().timestamp() - as_timestamp(states[cfg.outdoor_humidity].last_reported, 0) <= cfg.weather_max_age }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'manual' and (requested not in ['', 'cool', 'exhaust', 'circulate'] or requested_speed not in ['', 'low', 'med', 'high']) }}"
+        then:
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: "Invalid manual mode or speed."
+          - action: "input_datetime.set_datetime"
+            target:
+              entity_id: "input_datetime.den_fan_retry_after"
+            data:
+              timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
+          - stop: "Invalid manual mode or speed."
+            error: true
+      - variables:
+          manual_request: "{{ event == 'manual' and (requested != '' or requested_speed != '') }}"
+          observed_state: "{{ states('sensor.den_fan_state') }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ manual_request and observed_state not in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (requested == '' or requested_speed == '') }}"
+        then:
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: "Fan state unavailable; cannot preserve the other mode/speed setting. Check power and calibration."
+          - action: "input_datetime.set_datetime"
+            target:
+              entity_id: "input_datetime.den_fan_retry_after"
+            data:
+              timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
+          - stop: "Fan state unavailable; cannot preserve the other mode/speed setting. Check power and calibration."
+            error: true
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'resume_auto' or (false) or (false) }}"
+        then:
+          - action: "input_datetime.set_datetime"
+            target:
+              entity_id: "input_datetime.den_fan_manual_until"
+            data:
+              timestamp: "{{ now_ts }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ manual_request }}"
+        then:
+          - variables:
+              selected_mode: "{{ requested if requested != '' else observed_state.split('_')[0] }}"
+              selected_speed: "{{ requested_speed if requested_speed != '' else ('high' if (false) else observed_state.split('_')[1]) }}"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_manual_mode"
+            data:
+              option: "{{ selected_mode }}"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_manual_speed"
+            data:
+              option: "{{ selected_speed }}"
+          - action: "input_datetime.set_datetime"
+            target:
+              entity_id: "input_datetime.den_fan_manual_until"
+            data:
+              timestamp: "{{ now_ts + cfg.manual_minutes * 60 }}"
+      - variables:
+          manual_active: "{{ state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0) > now_ts }}"
+          desired_speed: "{{ states('input_select.den_fan_manual_speed') if state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0) > now_ts else 'high' }}"
       - variables:
           plan: >-
             {% set p = namespace(mode='exhaust', cycle=cycle, end=cycle_end, reason='Exhaust: continuous ventilation') %}
@@ -321,6 +422,12 @@ script:
               {% endif %}
             {% endif %}
             {{ dict(mode=p.mode, cycle=p.cycle, end=p.end, reason=p.reason) }}
+      - if:
+          - condition: "template"
+            value_template: "{{ manual_active }}"
+        then:
+          - variables:
+              plan: "{{ dict(plan, mode=states('input_select.den_fan_manual_mode'), cycle='normal', end=0, reason='Manual: ' ~ states('input_select.den_fan_manual_mode') ~ ' / ' ~ desired_speed ~ '; Auto resumes after hold') }}"
       - action: "input_select.select_option"
         target:
           entity_id: "input_select.den_fan_cycle"
@@ -338,7 +445,7 @@ script:
           value: "{{ plan.reason }}"
       - if:
           - condition: "template"
-            value_template: "{{ event == 'evaluate' and plan.cycle == cycle and plan.mode != previous_mode and now_ts - (state_attr('input_datetime.den_fan_last_command_time', 'timestamp') | float(0)) < cfg.minimum_mode_seconds and states('sensor.den_fan_state') == previous_mode ~ '_high' }}"
+            value_template: "{{ event == 'evaluate' and not manual_active and plan.cycle == cycle and plan.mode != previous_mode and now_ts - (state_attr('input_datetime.den_fan_last_command_time', 'timestamp') | float(0)) < cfg.minimum_mode_seconds and states('sensor.den_fan_state') == previous_mode ~ '_high' }}"
         then:
           - action: "input_text.set_value"
             target:
@@ -357,7 +464,7 @@ script:
         then:
           - stop: "Waiting after an unconfirmed command; see controller error."
       - variables:
-          target_state: "{{ plan.mode ~ '_high' }}"
+          target_state: "{{ plan.mode ~ '_' ~ desired_speed }}"
       - if:
           - condition: "template"
             value_template: "{{ states('sensor.den_fan_state') == target_state and is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) }}"
@@ -578,7 +685,7 @@ script:
           - stop: "Mode not confirmed; speed commands were not sent."
             error: true
       - variables:
-          speed_presses: "{{ (speed_order.index('high') - speed_order.index(after_mode.split('_')[1])) % 3 }}"
+          speed_presses: "{{ (speed_order.index(desired_speed) - speed_order.index(after_mode.split('_')[1])) % 3 }}"
       - repeat:
           count: "{{ speed_presses }}"
           sequence:
