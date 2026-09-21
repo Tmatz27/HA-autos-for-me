@@ -91,6 +91,13 @@ function card() {
   const select=editor.children.find(n=>n.tagName==='label').children[0];
   assert.equal(select.value,'sensor.den_fan_state'); assert.equal(select.children.length,4);
   assert.equal(editor.querySelectorAll('ha-form').length,2); // name plus collapsed display options; no wiring form
+  assert.equal(editor._rangeRows.length,10); // Off plus all nine modes/speeds
+  states['input_number.den_fan_watts_cool_med_upper']={state:'50'};
+  editor.hass={...hass};
+  assert.equal(editor._rangeRows[9].value.textContent,'≥ 50 W');
+  states['input_number.den_fan_watts_cool_med_upper']={state:'50.5'};
+  editor.hass={...hass};
+  assert.equal(editor._rangeRows[9].value.textContent,'≥ 50.5 W');
   const originalForms=editor.querySelectorAll('ha-form'); editor.hass={...hass};
   assert.equal(editor.querySelectorAll('ha-form')[0],originalForms[0]); // don't steal focus on sensor updates
   editor._choose('sensor.bedroom_fan_state');

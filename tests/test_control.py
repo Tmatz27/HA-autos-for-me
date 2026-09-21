@@ -321,8 +321,8 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.policy(temp=74,weather_valid=False)['mode'],'exhaust')
         self.assertEqual(self.policy(temp=76,weather_valid=False)['cycle'],'burst')
     def test_23_stale_power_vs_unchanged_fresh_reports(self):
-        h=Harness('den'); h.run(); h.reporting=False; h.advance(121); h.sensor('temperature',79); h.run()
-        self.assertIn('stale',h.error); self.assertEqual(len(h.remote_calls),0)
+        h=Harness('den'); h.cfg['power_max_age']=120; h.run(); h.reporting=False; h.advance(121); h.sensor('temperature',79); h.run()
+        self.assertIn('expired',h.error); self.assertEqual(len(h.remote_calls),0)
         h=Harness('den'); h.run(); h.advance(600); h.run()
         self.assertEqual(h.error,''); self.assertEqual(len(h.remote_calls),0)
     def test_24_missing_room_reading_does_not_become_extreme_temperature(self):
@@ -348,5 +348,40 @@ class Tests(unittest.TestCase):
         h.helper('input_select','requested_mode','cool')
         trigger={'from_state':State('off'),'to_state':h.states['binary_sensor.bedroom_fan_is_cool']}
         self.assertTrue(h.render(h.package['automation'][2]['conditions'][0]['value_template'],{'trigger':trigger}))
+
+
+    def test_29_change_only_reporting_does_not_expire(self):
+        h=Harness('den'); h.run(); h.reporting=False; h.advance(3600)
+        h.sensor('temperature',79); h.sensor('humidity',65); h.run()
+        self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('cool','high'))
+        self.assertEqual(len(h.remote_calls),2)
+    def test_30_unchanged_reports_do_not_confirm_a_missed_press(self):
+        h=Harness('den',mode='cool',speed='low'); h.miss=True; h.run()
+        self.assertEqual(len(h.remote_calls),1)
+        self.assertIn('Expected exhaust_low; read cool_low at 47 W',h.error)
+    def test_31_explicit_bedtime_request_retries_after_failure(self):
+        h=Harness('bedroom',when='2025-01-01T23:00:00'); h.miss=True
+        h.run(event='manual',target_function='cool'); self.assertTrue(h.error)
+        h.miss=False; h.run(event='manual',target_function='cool')
+        self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('cool','high'))
+        self.assertEqual(h.states('input_boolean.bedroom_fan_night_phase'),'on')
+    def test_32_remote_cool_recovers_after_old_error(self):
+        h=Harness('bedroom',when='2025-01-01T23:00:00'); h.run()
+        h.helper('input_text','error','Previous command failed')
+        h.helper('input_datetime','command_guard_until','unknown')
+        h.advance(120); h.sensor('power',51)
+        trigger={'to_state':h.states['binary_sensor.bedroom_fan_is_cool']}
+        predicate=h.package['automation'][2]['conditions'][0]['value_template']
+        self.assertTrue(h.render(predicate,{'trigger':trigger}))
+        h.put('input_datetime.bedroom_fan_command_guard_until','future',{'timestamp':h.now.timestamp()+60})
+        self.assertFalse(h.render(predicate,{'trigger':trigger}))
+    def test_33_night_drying_does_not_claim_it_is_morning(self):
+        p=self.policy(clock='23:00:00',event_clock='23:00:00',morning=True,rh=70)
+        self.assertFalse(p['night']); self.assertIn('Night drying',p['reason'])
+        p=self.policy(clock='23:00:00',event_clock='23:00:00',morning=True,rh=70,event='manual',requested='cool')
+        self.assertTrue(p['night']); self.assertIn('Sleep lock',p['reason'])
+    def test_34_slow_changed_reports_can_complete(self):
+        h=Harness('den',mode='cool',speed='low'); h.report_delay=45; h.run()
+        self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('exhaust','high'))
 
 if __name__=='__main__': unittest.main(verbosity=2)
