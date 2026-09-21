@@ -66,7 +66,7 @@ def build(room):
     cfg=dict(h,outdoor_temperature='sensor.outdoor_temperature',outdoor_humidity='sensor.outdoor_humidity',
         power_command='',speed_command='speed_toggle',feedback_timeout=60,settle_seconds=2,
         retry_seconds=300,power_max_age=0,room_max_age=900,weather_max_age=7200,
-        minimum_mode_seconds=180,burst_minutes=30,recovery_minutes=15)
+        manual_minutes=30,minimum_mode_seconds=180,burst_minutes=30,recovery_minutes=15)
     if room=='bedroom': cfg.update(bedtime_time='22:00:00',morning_time='06:00:00',cool_at=73,
         dry_target=60,dry_release=62,protect_on=15,protect_off=8,burst_at=75,burst_stop=73,extension_rh=64)
     else: cfg.update(cool_at=78,cool_stop=74,max_rh=70)
@@ -75,13 +75,15 @@ def build(room):
         for k in ['night_phase','morning_recovery','humidity_protection']:
             booleans[k]={'name':title+' '+k.replace('_',' ').title()}
     datetimes={k:{'name':title+' '+k.replace('_',' ').title(),'has_date':True,'has_time':True}
-               for k in ['last_command_time','command_guard_until','cycle_end','retry_after']+(['sleep_until','last_morning'] if room=='bedroom' else [])}
+               for k in ['last_command_time','command_guard_until','cycle_end','retry_after','manual_until']+(['sleep_until','last_morning'] if room=='bedroom' else [])}
     package={
       'input_boolean':{prefix+'_'+k:v for k,v in booleans.items()},
       'input_datetime':{prefix+'_'+k:v for k,v in datetimes.items()},
       'input_select':{
          prefix+'_cycle':{'name':title+' Cycle','options':['normal','burst','extension' if room=='bedroom' else 'extended','recovery']},
-         prefix+'_requested_mode':{'name':title+' Requested Mode','options':['exhaust','cool']}},
+         prefix+'_manual_mode':{'name':title+' Manual Mode','options':MODES},
+         prefix+'_manual_speed':{'name':title+' Manual Speed','options':SPEEDS},
+         prefix+'_requested_mode':{'name':title+' Requested Mode','options':MODES}},
       'input_text':{prefix+'_'+k:{'name':title+' '+k.title(),'max':255} for k in ['reason','error']},
       'input_number':{prefix+'_watts_'+key:{'name':title+' Watts '+key.replace('_',' ').title(),
         'min':0,'max':500,'step':0.1,'mode':'box','unit_of_measurement':'W'} for key in BANDS}}
@@ -106,14 +108,16 @@ def build(room):
   {% endfor %}
   {{ match.value }}
 {% endif %}""".replace('POWER',h['power']).replace('BOUNDS',bound_values).replace('INIT',ent('input_boolean','calibration_initialized'))
-    attrs={'power_sensor':h['power'],'calibration_prefix':prefix,
+    attrs={'power_sensor':h['power'],'calibration_prefix':prefix,'manual_control':True,
         'controller_script':f'script.{prefix}_set_state','status_sensor':f'sensor.{prefix}_control_status',
         'temperature_sensor':h['temperature'],'humidity_sensor':h['humidity'],
         **{key:template(state(ent('input_number','watts_'+key))+' | float(0)') for key in BANDS}}
     sensors=[{'name':title+' State','unique_id':prefix+'_state','icon':'mdi:fan','state':decoder,'attributes':attrs},
       {'name':title+' Control Status','unique_id':prefix+'_control_status','icon':'mdi:fan-auto',
        'state':template(state(ent('input_text','reason'))),
-       'attributes':{'error':template(state(ent('input_text','error'))),
+       'attributes':{'manual_until_timestamp':template(timestamp(ent('input_datetime','manual_until'))),
+        'manual_active':template(timestamp(ent('input_datetime','manual_until'))+' > now().timestamp()'),
+        'error':template(state(ent('input_text','error'))),
         'requested_mode':template(state(ent('input_select','requested_mode'))),
         'cycle':template(state(ent('input_select','cycle'))),
         'cycle_end':template(state(ent('input_datetime','cycle_end'))),
@@ -148,8 +152,8 @@ def build(room):
         *[action('input_number.set_value',ent('input_number','watts_'+key),{'value':value}) for key,value in BANDS.items()],
         action('input_boolean.turn_on',ent('input_boolean','calibration_initialized')),
         {'delay':{'seconds':1}}]),
-      variables(event="{{ event | default('manual' if target_function is defined else 'evaluate') }}",
-         requested="{{ target_function | default('') }}",now_ts='{{ now().timestamp() }}',
+      variables(event="{{ event | default('manual' if target_function is defined or target_speed is defined else 'evaluate') }}",
+         requested="{{ target_function | default('') }}",requested_speed="{{ target_speed | default('') }}",now_ts='{{ now().timestamp() }}',
          temp="{% set v = states(cfg.temperature) %}{{ (v | float * 9 / 5 + 32 if state_attr(cfg.temperature, 'unit_of_measurement') == '°C' else v | float) if is_number(v) else 0 }}",
          rh='{{ states(cfg.humidity) | float(0) }}',outside_rh='{{ states(cfg.outdoor_humidity) | float(0) }}',
          outside_temp="{% set v = states(cfg.outdoor_temperature) %}{{ (v | float * 9 / 5 + 32 if state_attr(cfg.outdoor_temperature, 'unit_of_measurement') == '°C' else v | float) if is_number(v) else 0 }}",
@@ -176,7 +180,26 @@ def build(room):
         # Give the external-remote observer a chance to recognize settled Cool.
         seq.append(iff("{{ event == 'evaluate' and (clock >= bedtime_clock or clock < morning_clock) and is_state('binary_sensor.bedroom_fan_is_cool','on') and (state_attr('input_datetime.bedroom_fan_last_command_time','timestamp') | float(0)) < as_timestamp(states.binary_sensor.bedroom_fan_is_cool.last_changed, 0) and now().timestamp() - as_timestamp(states.binary_sensor.bedroom_fan_is_cool.last_changed, 0) < 10 }}",[
           {'stop':'Waiting briefly for a possible manual bedtime selection.'}]))
-    seq.append(variables(plan=(ROOT/'templates'/f'{room}_policy.jinja').read_text()))
+    # Explicit selections bypass climate policy for a bounded manual hold.
+    # The other axis comes from observed state, never from an assumed default.
+    bedtime_event = "event in ['tv_off','observed_cool'] and (clock >= bedtime_clock or clock < morning_clock) and (event_clock >= bedtime_clock or event_clock < morning_clock)" if room=='bedroom' else 'false'
+    morning_end = "event == 'evaluate' and night and (now_ts >= sleep_end or not (clock >= bedtime_clock or clock < morning_clock))" if room=='bedroom' else 'false'
+    bedtime_cool = "requested == 'cool' and (clock >= bedtime_clock or clock < morning_clock)" if room=='bedroom' else 'false'
+    seq.extend([
+      iff("{{ event == 'manual' and (requested not in ['', 'cool', 'exhaust', 'circulate'] or requested_speed not in ['', 'low', 'med', 'high']) }}",failure('Invalid manual mode or speed.')),
+      variables(manual_request="{{ event == 'manual' and (requested != '' or requested_speed != '') }}",observed_state=template(state(prefix_state))),
+      iff(template("manual_request and observed_state not in "+repr(VALID)+" and (requested == '' or requested_speed == '')"),failure('Fan state unavailable; cannot preserve the other mode/speed setting. Check power and calibration.')),
+      iff(template("event == 'resume_auto' or ("+bedtime_event+") or ("+morning_end+")"),[time_set(ent('input_datetime','manual_until'),'now_ts')]),
+      iff('{{ manual_request }}',[
+        variables(selected_mode="{{ requested if requested != '' else observed_state.split('_')[0] }}",
+          selected_speed=template("requested_speed if requested_speed != '' else ('high' if ("+bedtime_cool+") else observed_state.split('_')[1])")),
+        action('input_select.select_option',ent('input_select','manual_mode'),{'option':'{{ selected_mode }}'}),
+        action('input_select.select_option',ent('input_select','manual_speed'),{'option':'{{ selected_speed }}'}),
+        time_set(ent('input_datetime','manual_until'),'now_ts + cfg.manual_minutes * 60')]),
+      variables(manual_active=template(timestamp(ent('input_datetime','manual_until'))+' > now_ts'),
+        desired_speed=template(state(ent('input_select','manual_speed'))+" if "+timestamp(ent('input_datetime','manual_until'))+" > now_ts else 'high'")),
+      variables(plan=(ROOT/'templates'/f'{room}_policy.jinja').read_text()),
+      iff('{{ manual_active }}',[variables(plan=template("dict(plan, mode="+state(ent('input_select','manual_mode'))+", cycle='normal', end=0, reason='Manual: ' ~ "+state(ent('input_select','manual_mode'))+" ~ ' / ' ~ desired_speed ~ '; Auto resumes after hold')"))])])
     if room=='bedroom':
         seq.extend([set_bool(ent('input_boolean','night_phase'),'plan.night'),
             set_bool(ent('input_boolean','morning_recovery'),'plan.morning'),
@@ -188,14 +211,14 @@ def build(room):
        action('input_text.set_value',ent('input_text','reason'),{'value':'{{ plan.reason }}'}),
        # Every queued request is evaluated anew. Throttle normal mode changes,
        # but never delay bedtime, morning start, burst/recovery transitions or manual requests.
-       iff(template("event == 'evaluate' and plan.cycle == cycle and plan.mode != previous_mode and " +
+       iff(template("event == 'evaluate' and not manual_active and plan.cycle == cycle and plan.mode != previous_mode and " +
          ("not plan.night and not plan.morning and plan.morning_at == morning_at and not night and " if room=='bedroom' else '')+
          f"now_ts - ({timestamp(ent('input_datetime','last_command_time'))}) < cfg.minimum_mode_seconds and states('{prefix_state}') == previous_mode ~ '_high'"),[
            action('input_text.set_value',ent('input_text','reason'),{'value':'Waiting for minimum mode interval; reevaluating each minute'}),
            {'stop':'Avoid rapid changes between modes.'}]),
        action('input_select.select_option',ent('input_select','requested_mode'),{'option':'{{ plan.mode }}'}),
        iff(template(f"event == 'evaluate' and now_ts < ({timestamp(ent('input_datetime','retry_after'))})"),[{'stop':'Waiting after an unconfirmed command; see controller error.'}]),
-       variables(target_state="{{ plan.mode ~ '_high' }}"),
+       variables(target_state="{{ plan.mode ~ '_' ~ desired_speed }}"),
        iff(template(f"states('{prefix_state}') == target_state and "+valid_power()[3:-3]),[
            action('input_text.set_value',ent('input_text','error'),{'value':''}),{'stop':'Target already confirmed; no remote presses needed.'}]),
        iff(template("not is_number(states(cfg.power)) or states(cfg.power) | float < 0 or (cfg.power_max_age > 0 and now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0) > cfg.power_max_age)"),failure("{{ 'Power unavailable or expired: ' ~ cfg.power ~ ' = ' ~ states(cfg.power) ~ '. Check the plug power sensor.' }}")),
@@ -226,16 +249,17 @@ def build(room):
     seq.append(press_loop('mode','mode_presses'))
     seq.extend([variables(after_mode=template(state(prefix_state))),
        iff(template(f"states('{prefix_state}').split('_')[0] != plan.mode"),failure('Mode not confirmed; speed commands were not sent.')),
-       variables(speed_presses="{{ (speed_order.index('high') - speed_order.index(after_mode.split('_')[1])) % 3 }}"),
+       variables(speed_presses="{{ (speed_order.index(desired_speed) - speed_order.index(after_mode.split('_')[1])) % 3 }}"),
        press_loop('speed','speed_presses'),
        iff(template('not ('+valid_power(expected='target_state')[3:-3]+')'),failure('Final target was not confirmed.')),
        time_set(ent('input_datetime','command_guard_until'),'now().timestamp()'),
        time_set(ent('input_datetime','last_command_time'),'now().timestamp()'),
        action('input_text.set_value',ent('input_text','error'),{'value':''})])
     package['script']={prefix+'_set_state':{'alias':title+' - Serialized Controller','mode':'queued','max':5,'max_exceeded':'silent',
-       'description':'All card and automation requests enter this queue. Always enforces High; never turns the fan off.',
-       'fields':{'event':{'name':'Request source','selector':{'select':{'options':['evaluate','manual','tv_off','observed_cool']}}},
-         'target_function':{'name':'Manual mode request','selector':{'select':{'options':['cool','exhaust']}}}},
+       'description':'All card and automation requests enter this queue. Automatic control uses High; manual selections hold for 30 minutes. Never turns the fan off.',
+       'fields':{'event':{'name':'Request source','selector':{'select':{'options':['evaluate','manual','resume_auto','tv_off','observed_cool']}}},
+         'target_function':{'name':'Manual mode request','selector':{'select':{'options':MODES}}},
+         'target_speed':{'name':'Manual speed request','selector':{'select':{'options':SPEEDS}}}},
        'sequence':seq}}
     primary={'alias':title+' - Continuous Control','id':prefix+'_continuous_control_v2','mode':'single','max_exceeded':'silent',
        # Routine decisions run once per minute, never on high-frequency sensor reports.

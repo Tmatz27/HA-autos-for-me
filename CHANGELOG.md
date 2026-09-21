@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.3
+
+- Fix manual selections being ignored by the den climate policy at ordinary room temperatures.
+- Restore Cool, Exhaust, Circulate, Low, Medium and High controls in package mode.
+- Hold explicit selections for 30 minutes, preserving the other observed axis; resume automatic High-speed control afterward.
+- Add a compact hold countdown and Resume Auto action; persist hold deadlines across restarts.
+- Preserve bedroom bedtime Cool/High behavior and scheduled morning handoff.
+- Require matching package support for manual controls and test the actual ignored-click scenario plus all nine selections.
+
 ## 1.2.2
 
 - Accept available numeric power from change-only reporting plugs; retain optional maximum report age and require a new matching power update after each toggle.
