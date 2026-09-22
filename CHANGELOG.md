@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.0
+
+- Replace both room policies with three rules, shared by one template: exhaust at or above 65% RH, cool at or below 62% RH when warmer than 72F, otherwise hold what is running.
+- Remove cooling bursts, extensions, recovery windows, outdoor-humidity protection, morning drying, stall tracking and the den humidity limit. Each was a separate mechanism that could request a different mode, and the interactions were the actual source of the cycling.
+- Fix the den refusing to cool at ordinary room temperatures. `cool_at` was 78F, so at 77F automatic control kept choosing exhaust and overrode manual Cool once the hold expired.
+- Drop 6 helper entities, 5 config knobs and the cycle countdown in the card.
+- Outdoor temperature and humidity are no longer used for control in either room.
+
 ## 1.3.0
 
 - Replace the bedroom's overlapping night/morning/protection flags with one explicit phase (`sleep`, `dry`, `balance`) that solely owns the fan, published as `input_select.bedroom_fan_phase`.

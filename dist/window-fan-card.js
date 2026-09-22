@@ -9,7 +9,7 @@
  * Standalone mode needs no helpers. Managed mode shares package state and commands.
  */
 
-const CARD_VERSION = "1.3.0";
+const CARD_VERSION = "1.4.0";
 
 const MODES = ["cool", "exhaust", "circulate"];
 const SPEEDS = ["low", "med", "high"];
@@ -318,11 +318,6 @@ class WindowFanCard extends HTMLElement {
     const status = cfg.status_sensor ? this._hass.states[cfg.status_sensor] : null;
     const backendError = status?.attributes?.error;
     const validError = backendError && !["unknown", "unavailable"].includes(backendError) ? backendError : "";
-    const end = Number(status?.attributes?.cycle_end_timestamp);
-    const timedCycle = ["burst", "extension", "extended", "recovery"].includes(status?.attributes?.cycle);
-    const deadlineText = timedCycle && end > Date.now() / 1000
-      ? new Date(end * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", ...(this._hass.config?.time_zone ? {timeZone:this._hass.config.time_zone} : {}) })
-      : "";
     this._root.className = `wfc${this._busy ? " busy" : ""}`;
     this._root.innerHTML = `
       <div class="wfc-header">
@@ -337,7 +332,7 @@ class WindowFanCard extends HTMLElement {
       ${pills.length ? `<div class="wfc-divider"></div><div class="wfc-pills">${pills.join("")}</div>` : ""}
       ${stats.length ? `<div class="wfc-stats">${stats.join("")}</div>` : ""}
       ${cfg.show_details && status ? `<div class="wfc-busy-note">${escapeHtml(status.state)}</div>` : ''}
-      ${cfg.show_details && deadlineText ? `<div class="wfc-busy-note">Until ${escapeHtml(deadlineText)}</div>` : ''}
+      ${cfg.show_details && "" ? `<div class="wfc-busy-note">Until ${escapeHtml("")}</div>` : ''}
       ${cfg.managed ? `<div class="wfc-manual-row">${Number(status?.attributes?.manual_until_timestamp) > Date.now()/1000
         ? `<span>Manual · ${Math.ceil((Number(status.attributes.manual_until_timestamp)-Date.now()/1000)/60)} min</span><button type="button" data-action="resume">Resume Auto</button>`
         : '<span>Auto</span>'}</div>` : ''}

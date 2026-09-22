@@ -1,0 +1,48 @@
+{# The whole climate policy. Three rules, in order:
+
+     humidity at or above exhaust_above          -> Exhaust   (get moisture out)
+     humidity at or below cool_below, room warm  -> Cool      (bring temp down)
+     anything else                               -> hold      (leave it alone)
+
+   Between cool_below and exhaust_above nothing is requested, which is what
+   stops the fan cycling: Cool draws outdoor air and raises room humidity, so
+   any single threshold makes Cool and Exhaust trigger each other. The mode
+   defaults to whatever is already running - a change has to be asked for.
+
+   The bedroom adds one override: a latched sleep lock. Nothing else does. #}
+{% set p = namespace(
+  mode=previous_mode if previous_mode in ['cool', 'exhaust'] else 'exhaust',
+  sleep=sleep, sleep_end=sleep_end, reason='') %}
+{% if has_sleep %}
+  {% set overnight = clock >= bedtime_clock or clock < morning_clock %}
+  {% set event_overnight = event_clock >= bedtime_clock or event_clock < morning_clock %}
+  {% if p.sleep and (now_ts >= p.sleep_end or not overnight) %}
+    {% set p.sleep = false %}{% set p.sleep_end = 0 %}
+  {% endif %}
+  {% if overnight and ((event_overnight and (event == 'tv_off' or event == 'observed_cool'
+      or (event == 'manual' and requested == 'cool')))
+      or (event == 'bedtime_check' and tv_off_now)) %}
+    {% set p.sleep = true %}{% set p.sleep_end = next_morning %}
+  {% endif %}
+{% endif %}
+{% if p.sleep %}
+  {% set p.mode = 'cool' %}
+  {% set p.reason = 'Sleep: Cool / High until ' ~ cfg.morning_time %}
+{% elif not climate_valid %}
+  {% set p.mode = 'exhaust' %}
+  {% set p.reason = 'Exhaust: room reading missing, stale, or invalid' %}
+{% elif rh >= cfg.exhaust_above %}
+  {% set p.mode = 'exhaust' %}
+  {% set p.reason = 'Exhaust: humidity ' ~ rh | round(1) ~ '% at or above ' ~ cfg.exhaust_above ~ '%' %}
+{% elif rh <= cfg.cool_below and temp > cfg.cool_above %}
+  {% set p.mode = 'cool' %}
+  {% set p.reason = 'Cool: humidity ' ~ rh | round(1) ~ '% at or below ' ~ cfg.cool_below
+    ~ '% and room ' ~ temp | round(1) ~ ' F above ' ~ cfg.cool_above ~ ' F' %}
+{% elif rh > cfg.cool_below %}
+  {% set p.reason = 'Holding ' ~ p.mode ~ ': humidity ' ~ rh | round(1) ~ '% between '
+    ~ cfg.cool_below ~ '% and ' ~ cfg.exhaust_above ~ '%' %}
+{% else %}
+  {% set p.reason = 'Holding ' ~ p.mode ~ ': room ' ~ temp | round(1) ~ ' F at or below '
+    ~ cfg.cool_above ~ ' F, humidity ' ~ rh | round(1) ~ '%' %}
+{% endif %}
+{{ dict(mode=p.mode, sleep=p.sleep, sleep_end=p.sleep_end, reason=p.reason) }}
