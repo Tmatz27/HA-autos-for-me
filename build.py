@@ -70,7 +70,7 @@ def build(room):
     if room=='bedroom': cfg.update(bedtime_time='22:00:00',morning_time='06:00:00',cool_at=73,
         dry_target=60,dry_release=62,dry_resume=66,protect_on=15,protect_off=8,
         burst_at=75,burst_stop=73,extension_rh=64,stall_minutes=60,stall_margin=1,
-        tv='media_player.bedtime_tv')
+        rearm_margin=5,tv='media_player.bedtime_tv')
     else: cfg.update(cool_at=78,cool_stop=74,max_rh=70)
     booleans={'calibration_initialized':{'name':title+' Calibration Initialized'}}
     if room=='bedroom':

@@ -446,8 +446,13 @@ class Tests(unittest.TestCase):
         # House air as wet as outside: exhaust cannot dry, so drying must stop.
         _,_,mem=self._drive(240,temp=74,rh0=72,outside_rh=95,clock='07:00:00',phase='dry',house_rh=94.0)
         self.assertTrue(mem['stalled']); self.assertEqual(mem['phase'],'balance')
-        # A materially wetter room is a new situation; drying must be retried.
-        p=self.policy(phase='balance',stalled=True,best_rh=70,rh=73,temp=74)
+        # Switching to Cool adds 2-3 points by itself, so that must NOT count as
+        # a new situation, or the fan re-arms drying against its own intake.
+        for rh in [72,73,74.9]:
+            self.assertTrue(self.policy(phase='balance',stalled=True,best_rh=70,rh=rh,temp=74)['stalled'],
+                f'{rh}% re-armed drying on the fan\'s own humidity bump')
+        # A genuinely wetter room is a new situation; drying must be retried.
+        p=self.policy(phase='balance',stalled=True,best_rh=70,rh=75,temp=74)
         self.assertFalse(p['stalled'])
     def test_38_mode_is_held_when_nothing_demands_a_change(self):
         # Inside the deadband the policy must keep whatever is already running.

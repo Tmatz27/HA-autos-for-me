@@ -71,9 +71,11 @@
   {% endif %}
   {% if rh <= cfg.dry_target %}
     {% set p.stalled = false %}
-  {% elif rh >= p.best_rh + 2 * cfg.stall_margin %}
+  {% elif rh >= p.best_rh + cfg.rearm_margin %}
     {# The room got materially wetter, so this is no longer the situation we
-       gave up on. Re-arm and let drying have another go. #}
+       gave up on. Re-arm and let drying have another go. The margin must stay
+       clear of the 2-3 points that switching to Cool adds on its own, or the
+       fan's own intake would keep re-arming a drying run that cannot work. #}
     {% set p.stalled = false %}{% set p.best_rh = rh %}{% set p.best_at = now_ts %}
   {% elif valid_previous == 'exhaust' and now_ts - p.best_at >= cfg.stall_minutes * 60 %}
     {% set p.stalled = true %}

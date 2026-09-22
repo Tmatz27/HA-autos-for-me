@@ -20,7 +20,7 @@ the fan in opposite directions:
 | TV already off when the 22:00 window opens | `sleep` starts at 22:00 |
 | Morning boundary passes | `dry`: Exhaust until RH ≤60%, or RH ≤62% when temperature >73°F |
 | Drying shows no 1-point improvement for 60 minutes | Give up drying; hand to `balance` to manage temperature |
-| Room becomes 2 points wetter than its best reading | Re-arm drying; this is no longer the situation it gave up on |
+| Room becomes 5 points wetter than its best reading | Re-arm drying; this is no longer the situation it gave up on |
 | `balance`, RH ≥66% | Exhaust |
 | `balance`, RH ≤62% with ≥73°F and no protection | Cool |
 | `balance`, RH between 62% and 66% | **Hold whatever is already running** |
@@ -39,6 +39,10 @@ Sleep overrides everything else. With Sleep inactive, invalid or stale indoor
 readings cause Exhaust. Missing outdoor humidity enables protection while still
 permitting heat-relief bursts. Protection suppresses comfort cooling but never
 the temperature ceiling.
+
+The 5-point re-arm margin (`rearm_margin`) is deliberately wider than the 2-3
+points that switching to Cool adds on its own. A narrower margin would let the
+fan's own intake re-arm a drying run that has already been shown not to work.
 
 Manual Cool on the managed card is explicit bedtime intent, even when the fan is already cooling. A physical remote requires an observable settled transition into Cool; a press with no state change cannot be inferred from watts. Speed-only changes do not start Sleep. A TV connection loss after an active state counts as off in this example; remove `unavailable` from that trigger if inappropriate for the integration.
 

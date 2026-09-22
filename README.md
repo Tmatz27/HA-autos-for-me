@@ -44,7 +44,7 @@ The packages and managed card should be upgraded together. The old setup generat
 
 ## Example policies
 
-The bedroom example runs one of three phases at a time, in a configurable **22:00–06:00** window. `sleep` locks Cool/High until morning and makes no mode changes at all; it starts from a TV transition to off/standby/unavailable, a manual Cool selection, or the window opening with the TV already off. `dry` exhausts each morning until humidity reaches target, giving up after an hour without progress. `balance` holds humidity inside a 62–66% deadband and cools when that will not add moisture. Every phase enforces a 20-minute minimum between mode changes, and a room above 75°F still earns a time-boxed cooling burst.
+The bedroom example runs one of three phases at a time, in a configurable **22:00–06:00** window. `sleep` locks Cool/High until morning and makes no mode changes at all; it starts from a TV transition to off/standby/unavailable, a manual Cool selection, or the window opening with the TV already off. `dry` exhausts each morning until humidity reaches target, giving up after an hour without progress and retrying only on a 5-point rise, which is clear of the humidity that cooling itself adds. `balance` holds humidity inside a 62–66% deadband and cools when that will not add moisture. Every phase enforces a 20-minute minimum between mode changes, and a room above 75°F still earns a time-boxed cooling burst.
 
 The den example runs Exhaust/High continuously until room temperature reaches its cooling threshold. Cooling runs in timed bursts, ending early when the room cools sufficiently; acceptable indoor humidity permits extensions.
 
