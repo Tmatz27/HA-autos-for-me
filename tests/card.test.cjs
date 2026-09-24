@@ -128,6 +128,23 @@ function card() {
   c.setConfig({fan_package:'sensor.missing'});c._built=true;c.hass=hass;
   const before=c.calls.length;await c._setState('cool',null);assert.equal(c.calls.length,before);
   assert.equal(c._error,'Select a fan in the card editor.');
+  const rangeHass={states:{
+    'sensor.den_fan_state':{state:'exhaust_high',attributes:{power_sensor:'sensor.den_power',calibration_prefix:'den_fan',
+      manual_control:true,calibration_kind:'ranges',calibration_ranges:{cool_low:[46,47],cool_high:[50,53]},
+      confirm_script:'script.den_fan_confirm_state'}},
+    'script.den_fan_set_state':{state:'off'},'script.den_fan_confirm_state':{state:'off'}},
+    callService:async(...args)=>rangeCalls.push(args)};
+  const rangeCalls=[]; const rangeEditor=new WindowFanCardEditor();
+  rangeEditor.setConfig({fan_package:'sensor.den_fan_state'}); rangeEditor.hass=rangeHass;
+  const ranges=rangeEditor.children.find(n=>n.dataset.section==='calibration').children[1];
+  assert.equal(ranges.children.length,9); assert.equal(ranges.children[0].children[1].textContent,'46 – 47 W');
+  const sync=rangeEditor.children.find(n=>n.dataset.section==='confirm').children[1];
+  const [physicalSelect,confirm]=sync.children;
+  assert.equal(confirm.disabled,true); assert.equal(physicalSelect.children.length,10);
+  physicalSelect.value='cool_high'; physicalSelect.listeners.change(); await confirm.listeners.click();
+  assert.equal(rangeCalls.length,1); assert.equal(rangeCalls[0][1],'den_fan_confirm_state');
+  assert.equal(rangeCalls[0][2].setting,'cool_high');
+  assert.equal(rangeCalls.some(call=>call[0]==='remote'),false);
   console.log('PASS: package discovery among 20,000 unrelated sensors; partial-config repair; minimal config; filtered sensors; editor room switching; unavailable-package guard; uncluttered card.');
   console.log('PASS: all nine shared states; managed service routing; manual mode/speed payloads; Resume Auto; older-package guard; no Off; duplicate clicks; calibration fields; standalone decoding.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

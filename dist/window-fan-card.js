@@ -9,7 +9,7 @@
  * Standalone mode needs no helpers. Managed mode shares package state and commands.
  */
 
-const CARD_VERSION = "1.4.0";
+const CARD_VERSION = "1.5.0";
 
 const MODES = ["cool", "exhaust", "circulate"];
 const SPEEDS = ["low", "med", "high"];
@@ -318,6 +318,11 @@ class WindowFanCard extends HTMLElement {
     const status = cfg.status_sensor ? this._hass.states[cfg.status_sensor] : null;
     const backendError = status?.attributes?.error;
     const validError = backendError && !["unknown", "unavailable"].includes(backendError) ? backendError : "";
+    const end = Number(status?.attributes?.cycle_end_timestamp);
+    const timedCycle = ["burst", "extension", "extended", "recovery"].includes(status?.attributes?.cycle);
+    const deadlineText = timedCycle && end > Date.now() / 1000
+      ? new Date(end * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", ...(this._hass.config?.time_zone ? {timeZone:this._hass.config.time_zone} : {}) })
+      : "";
     this._root.className = `wfc${this._busy ? " busy" : ""}`;
     this._root.innerHTML = `
       <div class="wfc-header">
@@ -332,7 +337,7 @@ class WindowFanCard extends HTMLElement {
       ${pills.length ? `<div class="wfc-divider"></div><div class="wfc-pills">${pills.join("")}</div>` : ""}
       ${stats.length ? `<div class="wfc-stats">${stats.join("")}</div>` : ""}
       ${cfg.show_details && status ? `<div class="wfc-busy-note">${escapeHtml(status.state)}</div>` : ''}
-      ${cfg.show_details && "" ? `<div class="wfc-busy-note">Until ${escapeHtml("")}</div>` : ''}
+      ${cfg.show_details && deadlineText ? `<div class="wfc-busy-note">Until ${escapeHtml(deadlineText)}</div>` : ''}
       ${cfg.managed ? `<div class="wfc-manual-row">${Number(status?.attributes?.manual_until_timestamp) > Date.now()/1000
         ? `<span>Manual · ${Math.ceil((Number(status.attributes.manual_until_timestamp)-Date.now()/1000)/60)} min</span><button type="button" data-action="resume">Resume Auto</button>`
         : '<span>Auto</span>'}</div>` : ''}
@@ -461,6 +466,9 @@ function discoverFans(hass) {
     return [{ state_sensor: id, controller_script: script,
       status_sensor: a.status_sensor || `sensor.${prefix}_control_status`,
       calibration_prefix: prefix, power_sensor: a.power_sensor,
+      calibration_kind: a.calibration_kind, calibration_ranges: a.calibration_ranges,
+      range_tolerance: a.range_tolerance,
+      confirm_script: a.confirm_script,
       temperature_sensor: a.temperature_sensor, humidity_sensor: a.humidity_sensor,
       label: (a.friendly_name || prefix.replaceAll('_', ' ')).replace(/ State$/i, '') }];
   }).sort((a, b) => a.label.localeCompare(b.label));
@@ -619,6 +627,48 @@ class WindowFanCardEditor extends HTMLElement {
     if (fan) {
       const calibration = document.createElement('div');
       this._rangeRows = [];
+      if (fan.calibration_kind === 'ranges') {
+        for (const mode of MODES) for (const speed of SPEEDS) {
+          const bounds = fan.calibration_ranges?.[`${mode}_${speed}`];
+          const row = document.createElement('div'); row.className = 'calibration-row';
+          const label = document.createElement('span');
+          label.textContent = `${MODE_META[mode].label} / ${SPEED_META[speed].label}`;
+          const value = document.createElement('span');
+          value.textContent = Array.isArray(bounds) && bounds.length === 2 ? `${bounds[0]} – ${bounds[1]} W` : 'Unavailable';
+          row.append(label, value); calibration.appendChild(row);
+        }
+        if (Number.isFinite(Number(fan.range_tolerance))) {
+          const tolerance = document.createElement('p'); tolerance.textContent = `Reading tolerance: ±${Number(fan.range_tolerance)} W`;
+          calibration.appendChild(tolerance);
+        }
+        this._section('Measured ranges', calibration, 'calibration');
+        if (/^script\.[a-z0-9_]+$/.test(fan.confirm_script || '') && this._hass.states[fan.confirm_script]) {
+          const sync = document.createElement('div');
+          const select = document.createElement('select'); select.setAttribute('aria-label','Physical fan setting');
+          const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = 'Select the setting shown on the fan';
+          select.appendChild(placeholder);
+          for (const mode of MODES) for (const speed of SPEEDS) {
+            const option = document.createElement('option'); option.value = `${mode}_${speed}`;
+            option.textContent = `${MODE_META[mode].label} / ${SPEED_META[speed].label}`; select.appendChild(option);
+          }
+          select.value = '';
+          const button = document.createElement('button'); button.className = 'calibration-row';
+          button.textContent = 'Confirm physical setting'; button.disabled = true;
+          select.addEventListener('change', () => { button.disabled = !select.value; });
+          const result = document.createElement('p');
+          button.addEventListener('click', async () => {
+            if (!select.value || button.disabled) return;
+            button.disabled = true;
+            try {
+              await this._hass.callService('script', fan.confirm_script.slice(7), {setting:select.value});
+              result.textContent = 'Confirmation submitted. Check the card for the result.';
+            } catch (error) { result.textContent = error.message || String(error); }
+            finally { button.disabled = !select.value; }
+          });
+          sync.append(select,button,result); this._section('Confirm fan setting', sync, 'confirm');
+        }
+        return;
+      }
       const keys = [...RANGE_KEYS, 'cool_high'];
       for (let i = 0; i < keys.length; i++) {
         const key = keys[i];
