@@ -192,8 +192,8 @@ class Tests(unittest.TestCase):
             rh+=((outside_rh if mode=='cool' else house_rh)-rh)*rate
             rh=max(20.0,min(99.0,rh)); now+=60
         return changes,round(rh,1),mode
-    def test_01_three_rules_in_both_rooms(self):
-        for room in ['bedroom','den']:
+    def test_01_bedroom_three_rules(self):
+        for room in ['bedroom']:
             # Humidity at or above the limit: get it out, whatever the temperature.
             for temp,rh in [(68,65),(80,70),(60,90),(80,65)]:
                 self.assertEqual(self.policy(room,temp=temp,rh=rh,previous_mode='cool')['mode'],
@@ -211,19 +211,13 @@ class Tests(unittest.TestCase):
         # Cooling raises room humidity, so a single threshold makes Cool and
         # Exhaust trigger each other. Every case below cycled once a minute
         # before the deadband existed.
-        hold=Harness('den').cfg['minimum_mode_seconds']
-        for room in ['bedroom','den']:
+        hold=Harness('bedroom').cfg['minimum_mode_seconds']
+        for room in ['bedroom']:
             for temp,rh0 in [(74,62),(73,62),(76,62),(77,64),(80,66)]:
                 changes,_,_=self.drive(room,180,temp,rh0)
                 self.assertLessEqual(len(changes),6,f'{room} {temp}F/{rh0}%: {len(changes)} changes in 3 h')
                 for gap in changes[1:]:
                     self.assertGreaterEqual(gap,hold,f'{room} {temp}F/{rh0}%: switched after {gap}s')
-    def test_03_den_at_the_reported_conditions_cools_and_stays(self):
-        # 77.2 F / 48% RH is what the den actually reported while the old policy
-        # kept forcing Exhaust.
-        changes,_,mode=self.drive('den',180,77.2,48.0,outside_rh=55.0,house_rh=52.0)
-        self.assertEqual(mode,'cool')
-        self.assertLessEqual(len(changes),1)
     def test_04_bedroom_sleep_lock_overrides_all_three_rules(self):
         for temp,rh in [(60,90),(80,40),(75,65),(50,99)]:
             p=self.policy(temp=temp,rh=rh,sleep=True,sleep_end=176400,clock='23:30:00')
@@ -242,20 +236,15 @@ class Tests(unittest.TestCase):
         self.assertFalse(self.policy(event='tv_off',clock='22:00:05',event_clock='21:59:55')['sleep'])
         # Morning releases it.
         self.assertFalse(self.policy(sleep=True,sleep_end=99999,clock='06:00:00',rh=70)['sleep'])
-    def test_06_den_has_no_sleep_lock(self):
-        for event,req in [('tv_off',''),('bedtime_check',''),('manual','cool')]:
-            p=self.policy('den',event=event,requested=req,clock='23:30:00',
-                event_clock='23:30:00',rh=90,tv_off_now=True)
-            self.assertFalse(p['sleep']); self.assertEqual(p['mode'],'exhaust')
     def test_07_invalid_room_readings_exhaust(self):
-        for room in ['bedroom','den']:
+        for room in ['bedroom']:
             p=self.policy(room,climate_valid=False,temp=80,rh=40)
             self.assertEqual(p['mode'],'exhaust'); self.assertIn('invalid',p['reason'])
         # Sleep still wins over a bad reading.
         self.assertEqual(self.policy(climate_valid=False,sleep=True,
             sleep_end=176400,clock='23:30:00')['mode'],'cool')
     def test_10_yaml_and_jinja_parse_and_no_fan_off(self):
-        for room in ['bedroom','den']:
+        for room in ['bedroom']:
             h=Harness(room)
             def walk(v):
                 if isinstance(v,dict):
@@ -268,7 +257,7 @@ class Tests(unittest.TestCase):
             self.assertEqual(h.script['mode'],'queued')
             self.assertNotIn('off',h.script['fields']['target_function']['selector']['select']['options'])
     def test_28_routine_evaluation_is_bounded(self):
-        for room in ['bedroom','den']:
+        for room in ['bedroom']:
             h=Harness(room)
             triggers=h.package['automation'][0]['triggers']
             self.assertEqual(triggers,[{'trigger':'homeassistant','event':'start'},
@@ -283,7 +272,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(auto(h,'manual_cool')['triggers'][0]['trigger'],'state')
 
     def test_11_actual_driver_all_running_states(self):
-        for room in ['bedroom','den']:
+        for room in ['bedroom']:
             for mode in build.MODES:
                 for speed in build.SPEEDS:
                     for desired in ['cool','exhaust']:
@@ -297,38 +286,6 @@ class Tests(unittest.TestCase):
                             self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),(desired,'high'))
                             expected=(build.MODES.index(desired)-build.MODES.index(mode))%3+(2-build.SPEEDS.index(speed))%3
                             self.assertEqual(len(h.remote_calls),expected)
-    def test_12_missed_press_stops_and_rate_limits(self):
-        h=Harness('den',mode='cool',speed='low'); h.sensor('temperature',72); h.miss=True; h.run()
-        self.assertEqual(len(h.remote_calls),1); self.assertTrue(h.error)
-        h.advance(60); h.run(); self.assertEqual(len(h.remote_calls),1)
-        h.miss=False; h.advance(301); h.run(); self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('exhaust','high'))
-    def test_13_missing_power_no_remote_presses(self):
-        for value in ['unavailable','unknown','NaN',-1]:
-            h=Harness('den'); h.sensor('power',value); h.run()
-            self.assertTrue(h.error); self.assertEqual(len(h.remote_calls),0)
-    def test_14_delayed_power_report(self):
-        h=Harness('den',mode='cool',speed='low'); h.sensor('temperature',72); h.report_delay=12; h.run()
-        self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('exhaust','high'))
-    def test_15_power_restore_and_off_while_plug_on(self):
-        h=Harness('den'); h.sensor('power',0); h.put(h.cfg['plug'],'off'); h.run()
-        self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('exhaust','high'))
-        h=Harness('den'); h.sensor('power',0); h.run()
-        self.assertTrue(h.error); self.assertEqual(len(h.remote_calls),0)
-    def test_16_calibration_restores_and_matches_source_ranges(self):
-        h=Harness('den'); h.run()
-        points={0:'off',9.9:'off',10:'exhaust_low',31.99:'exhaust_low',32:'exhaust_med',34.5:'exhaust_high',
-            37:'circulate_low',41:'circulate_med',44:'circulate_high',46:'cool_low',48:'cool_med',50:'cool_high',51:'cool_high'}
-        for w,s in points.items(): h.sensor('power',w); self.assertEqual(h.states('sensor.den_fan_state'),s)
-        h.helper('input_number','watts_circulate_low_upper',40.5); h.run()
-        self.assertEqual(h.states('input_number.den_fan_watts_circulate_low_upper'),'40.5')
-        h.helper('input_number','watts_circulate_low_upper',20)
-        self.assertEqual(h.states('sensor.den_fan_state'),'unknown')
-    def test_17_temperature_units(self):
-        # 26 C is 78.8 F, above cool_above; unconverted it would read as 26 and
-        # never reach the Cool branch, so this fails loudly if conversion breaks.
-        h=Harness('den'); h.sensor('humidity',48)
-        h.put(h.cfg['temperature'],26,{'unit_of_measurement':'°C'}); h.run()
-        self.assertEqual(h.states('input_select.den_fan_requested_mode'),'cool')
     def test_18_actual_sleep_to_morning_resume(self):
         h=Harness('bedroom',when='2025-01-01T23:00:00'); h.run(event='manual',target_function='cool')
         self.assertEqual(h.states('input_boolean.bedroom_fan_night_phase'),'on')
@@ -347,14 +304,6 @@ class Tests(unittest.TestCase):
         # A completed automation sequence records a timestamp after its own mode transition.
         h.put('input_datetime.bedroom_fan_last_command_time','done',{'timestamp':h.now.timestamp()+30})
         self.assertFalse(h.render(observer,{'trigger':trigger}))
-    def test_23_stale_power_vs_unchanged_fresh_reports(self):
-        h=Harness('den'); h.cfg['power_max_age']=120; h.run(); h.reporting=False; h.advance(121); h.sensor('temperature',79); h.run()
-        self.assertIn('expired',h.error); self.assertEqual(len(h.remote_calls),0)
-        h=Harness('den'); h.run(); h.advance(600); h.run()
-        self.assertEqual(h.error,''); self.assertEqual(len(h.remote_calls),0)
-    def test_24_missing_room_reading_does_not_become_extreme_temperature(self):
-        h=Harness('den',mode='cool'); h.sensor('temperature','unavailable'); h.run()
-        self.assertEqual(h.mode,'exhaust'); self.assertEqual(h.error,'')
     def test_27_manual_mode_edge_survives_speed_changes(self):
         h=Harness('bedroom'); h.run(); h.advance(20)
         h.sensor('power',47)
@@ -366,15 +315,6 @@ class Tests(unittest.TestCase):
         self.assertTrue(h.render(auto(h,'manual_cool')['conditions'][0]['value_template'],{'trigger':trigger}))
 
 
-    def test_29_change_only_reporting_does_not_expire(self):
-        h=Harness('den'); h.run(); h.reporting=False; h.advance(3600)
-        h.sensor('temperature',79); h.sensor('humidity',48); h.run()
-        self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('cool','high'))
-        self.assertEqual(len(h.remote_calls),2)
-    def test_30_unchanged_reports_do_not_confirm_a_missed_press(self):
-        h=Harness('den',mode='cool',speed='low'); h.miss=True; h.run()
-        self.assertEqual(len(h.remote_calls),1)
-        self.assertIn('Expected exhaust_low; read cool_low at 47 W',h.error)
     def test_31_explicit_bedtime_request_retries_after_failure(self):
         h=Harness('bedroom',when='2025-01-01T23:00:00'); h.miss=True
         h.run(event='manual',target_function='cool'); self.assertTrue(h.error)
@@ -391,52 +331,8 @@ class Tests(unittest.TestCase):
         self.assertTrue(h.render(predicate,{'trigger':trigger}))
         h.put('input_datetime.bedroom_fan_command_guard_until','future',{'timestamp':h.now.timestamp()+60})
         self.assertFalse(h.render(predicate,{'trigger':trigger}))
-    def test_34_slow_changed_reports_can_complete(self):
-        h=Harness('den',mode='cool',speed='low'); h.report_delay=45; h.run()
-        self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('exhaust','high'))
 
 
-    def test_35_screenshot_manual_cool_at_73_degrees(self):
-        h=Harness('den'); h.sensor('temperature',73.04); h.sensor('humidity',56)
-        h.run(event='manual',target_function='cool')
-        self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('cool','high'))
-        self.assertEqual(len(h.remote_calls),2)
-        deadline=h.states['input_datetime.den_fan_manual_until'].attributes['timestamp']
-        h.advance(60); h.run()
-        self.assertEqual(h.mode,'cool'); self.assertEqual(len(h.remote_calls),2)
-        self.assertEqual(h.states['input_datetime.den_fan_manual_until'].attributes['timestamp'],deadline)
-    def test_36_all_nine_explicit_manual_selections(self):
-        for mode in build.MODES:
-            for speed in build.SPEEDS:
-                with self.subTest(mode=mode,speed=speed):
-                    h=Harness('den'); h.sensor('temperature',73.04); h.sensor('humidity',56)
-                    h.run(event='manual',target_function=mode,target_speed=speed)
-                    self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),(mode,speed))
-                    h.advance(60); h.run()
-                    self.assertEqual((h.mode,h.speed),(mode,speed))
-    def test_37_manual_hold_expires_to_auto_high(self):
-        h=Harness('den'); h.run(event='manual',target_function='circulate',target_speed='low')
-        deadline=h.states['input_datetime.den_fan_manual_until'].attributes['timestamp']
-        h.advance(deadline-h.now.timestamp()-1); h.run()
-        self.assertEqual((h.mode,h.speed),('circulate','low'))
-        h.advance(2); h.run()
-        self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('exhaust','high'))
-        self.assertFalse(h.states['sensor.den_fan_control_status'].attributes['manual_active'])
-    def test_38_resume_auto_applies_policy_immediately(self):
-        h=Harness('den'); h.run(event='manual',target_function='cool',target_speed='low')
-        h.run(event='resume_auto')
-        self.assertEqual(h.error,''); self.assertEqual((h.mode,h.speed),('exhaust','high'))
-    def test_39_hold_survives_restart_without_extending(self):
-        h=Harness('den'); h.run(event='manual',target_function='circulate',target_speed='med')
-        h.advance(600)
-        restarted=Harness('den',when=h.now.replace(tzinfo=None).isoformat(),mode=h.mode,speed=h.speed)
-        for key,value in h.states.data.items():
-            if key.startswith(('input_select.','input_datetime.','input_boolean.','input_number.','input_text.')):
-                restarted.states.data[key]=deepcopy(value)
-        restarted.refresh(); restarted.run()
-        self.assertEqual((restarted.mode,restarted.speed),('circulate','med'))
-        self.assertEqual(restarted.states['input_datetime.den_fan_manual_until'].attributes['timestamp'],
-                         h.states['input_datetime.den_fan_manual_until'].attributes['timestamp'])
     def test_40_bedtime_cool_hold_resumes_sleep_then_morning(self):
         h=Harness('bedroom',when='2025-01-01T23:00:00',speed='low')
         h.run(event='manual',target_function='cool')
@@ -446,22 +342,13 @@ class Tests(unittest.TestCase):
         deadline=h.states['input_datetime.bedroom_fan_sleep_until'].attributes['timestamp']
         h.advance(deadline-h.now.timestamp()+1); h.run()
         self.assertEqual((h.mode,h.speed),('exhaust','high'))
-    def test_41_invalid_or_unknown_manual_axis_sends_nothing(self):
-        h=Harness('den'); h.run(event='manual',target_function='invalid')
-        self.assertTrue(h.error); self.assertEqual(len(h.remote_calls),0)
-        h=Harness('den'); h.sensor('power','unavailable'); h.run(event='manual',target_speed='low')
-        self.assertTrue(h.error); self.assertEqual(len(h.remote_calls),0)
     def test_42_tv_bedtime_takes_over_a_manual_hold(self):
         h=Harness('bedroom',when='2025-01-01T23:00:00')
         h.run(event='manual',target_function='exhaust',target_speed='low')
         h.run(event='tv_off')
         self.assertEqual((h.mode,h.speed),('cool','high'))
         self.assertFalse(h.states['sensor.bedroom_fan_control_status'].attributes['manual_active'])
-    def test_43_single_axis_buttons_preserve_other_axis(self):
-        h=Harness('den',mode='exhaust',speed='med'); h.sensor('temperature',79)
-        h.run(event='manual',target_speed='low')
-        self.assertEqual((h.mode,h.speed),('exhaust','low'))
-        h.run(event='manual',target_function='cool')
-        self.assertEqual((h.mode,h.speed),('cool','low'))
+
+from test_den_controller import Tests as DenTests
 
 if __name__=='__main__': unittest.main(verbosity=2)
