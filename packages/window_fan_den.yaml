@@ -1,31 +1,44 @@
-# Window Fan - Den - continuous High-speed control
-# Replace the previous den package; do not enable both versions.
-# SETTINGS: edit cfg in script.den_fan_set_state.sequence[0].variables.
-# Calibration helpers restore their values. First run seeds EXAMPLE ranges.
-# Measure all nine states before enabling control; edit via card or Helpers.
-# No fan-off commands. All external entity IDs are placeholders.
-# Power-command name is optional and blank until you supply a learned on/off code.
+# Den window fan controller 1.5.0. Replace the previous den package.
+# Configure HARDWARE in build.py and ranges/settings in den_controller.py, then regenerate.
 input_boolean:
-  den_fan_calibration_initialized:
-    name: "Den Fan Calibration Initialized"
-input_datetime:
-  den_fan_last_command_time:
-    name: "Den Fan Last Command Time"
-    has_date: true
-    has_time: true
-  den_fan_command_guard_until:
-    name: "Den Fan Command Guard Until"
-    has_date: true
-    has_time: true
-  den_fan_retry_after:
-    name: "Den Fan Retry After"
-    has_date: true
-    has_time: true
-  den_fan_manual_until:
-    name: "Den Fan Manual Until"
-    has_date: true
-    has_time: true
+  den_fan_command_fault:
+    name: "Den Fan Command Fault"
+  den_fan_boot_pending:
+    name: "Den Fan Startup Pending"
 input_select:
+  den_fan_confirmed_state:
+    name: "Den Fan Confirmed State"
+    options:
+      - "unknown"
+      - "off"
+      - "cool_low"
+      - "cool_med"
+      - "cool_high"
+      - "exhaust_low"
+      - "exhaust_med"
+      - "exhaust_high"
+      - "circulate_low"
+      - "circulate_med"
+      - "circulate_high"
+  den_fan_cycle:
+    name: "Den Fan Cycle"
+    options:
+      - "normal"
+      - "burst"
+      - "extended"
+      - "recovery"
+  den_fan_requested_mode:
+    name: "Den Fan Requested Mode"
+    options:
+      - "cool"
+      - "exhaust"
+      - "circulate"
+  den_fan_requested_speed:
+    name: "Den Fan Requested Speed"
+    options:
+      - "low"
+      - "med"
+      - "high"
   den_fan_manual_mode:
     name: "Den Fan Manual Mode"
     options:
@@ -38,12 +51,23 @@ input_select:
       - "low"
       - "med"
       - "high"
-  den_fan_requested_mode:
-    name: "Den Fan Requested Mode"
-    options:
-      - "cool"
-      - "exhaust"
-      - "circulate"
+input_datetime:
+  den_fan_manual_until:
+    name: "Den Fan Manual Until"
+    has_date: true
+    has_time: true
+  den_fan_cycle_end:
+    name: "Den Fan Cycle End"
+    has_date: true
+    has_time: true
+  den_fan_command_guard_until:
+    name: "Den Fan Command Guard Until"
+    has_date: true
+    has_time: true
+  den_fan_last_command_time:
+    name: "Den Fan Last Command Time"
+    has_date: true
+    has_time: true
 input_text:
   den_fan_reason:
     name: "Den Fan Reason"
@@ -51,142 +75,63 @@ input_text:
   den_fan_error:
     name: "Den Fan Error"
     max: 255
-input_number:
-  den_fan_watts_off_below:
-    name: "Den Fan Watts Off Below"
-    min: 0
-    max: 500
-    step: 0.1
-    mode: "box"
-    unit_of_measurement: "W"
-  den_fan_watts_exhaust_low_upper:
-    name: "Den Fan Watts Exhaust Low Upper"
-    min: 0
-    max: 500
-    step: 0.1
-    mode: "box"
-    unit_of_measurement: "W"
-  den_fan_watts_exhaust_med_upper:
-    name: "Den Fan Watts Exhaust Med Upper"
-    min: 0
-    max: 500
-    step: 0.1
-    mode: "box"
-    unit_of_measurement: "W"
-  den_fan_watts_exhaust_high_upper:
-    name: "Den Fan Watts Exhaust High Upper"
-    min: 0
-    max: 500
-    step: 0.1
-    mode: "box"
-    unit_of_measurement: "W"
-  den_fan_watts_circulate_low_upper:
-    name: "Den Fan Watts Circulate Low Upper"
-    min: 0
-    max: 500
-    step: 0.1
-    mode: "box"
-    unit_of_measurement: "W"
-  den_fan_watts_circulate_med_upper:
-    name: "Den Fan Watts Circulate Med Upper"
-    min: 0
-    max: 500
-    step: 0.1
-    mode: "box"
-    unit_of_measurement: "W"
-  den_fan_watts_circulate_high_upper:
-    name: "Den Fan Watts Circulate High Upper"
-    min: 0
-    max: 500
-    step: 0.1
-    mode: "box"
-    unit_of_measurement: "W"
-  den_fan_watts_cool_low_upper:
-    name: "Den Fan Watts Cool Low Upper"
-    min: 0
-    max: 500
-    step: 0.1
-    mode: "box"
-    unit_of_measurement: "W"
-  den_fan_watts_cool_med_upper:
-    name: "Den Fan Watts Cool Med Upper"
-    min: 0
-    max: 500
-    step: 0.1
-    mode: "box"
-    unit_of_measurement: "W"
 template:
   - sensor:
+      - name: "Den Fan Power Candidates"
+        unique_id: "den_fan_power_candidates"
+        state: "{% set p = states('sensor.den_fan_power') %}{% if not is_number(p) or p | float < 0 %}unknown{% elif p | float < 10 %}off{% else %}{% set ranges = {\"cool_low\": [46, 47], \"cool_med\": [48, 50], \"cool_high\": [50, 53], \"exhaust_low\": [32, 33], \"exhaust_med\": [34, 35], \"exhaust_high\": [35, 38], \"circulate_low\": [39, 40], \"circulate_med\": [42, 43], \"circulate_high\": [44, 46]} %}{% set ns = namespace(matches=[]) %}{% for name, bounds in ranges.items() %}{% if bounds[0] - 0.5 <= p | float <= bounds[1] + 0.5 %}{% set ns.matches = ns.matches + [name] %}{% endif %}{% endfor %}{{ ns.matches | join('|') if ns.matches else 'unknown' }}{% endif %}"
       - name: "Den Fan State"
         unique_id: "den_fan_state"
         icon: "mdi:fan"
-        state: >-
-          {% set raw = states('sensor.den_fan_power') %}
-          {% set bounds = [states('input_number.den_fan_watts_off_below') | float(-1), states('input_number.den_fan_watts_exhaust_low_upper') | float(-1), states('input_number.den_fan_watts_exhaust_med_upper') | float(-1), states('input_number.den_fan_watts_exhaust_high_upper') | float(-1), states('input_number.den_fan_watts_circulate_low_upper') | float(-1), states('input_number.den_fan_watts_circulate_med_upper') | float(-1), states('input_number.den_fan_watts_circulate_high_upper') | float(-1), states('input_number.den_fan_watts_cool_low_upper') | float(-1), states('input_number.den_fan_watts_cool_med_upper') | float(-1)] %}
-          {% set ns = namespace(valid=true) %}
-          {% for i in range(1, bounds | length) %}
-            {% if bounds[i] <= bounds[i-1] %}{% set ns.valid = false %}{% endif %}
-          {% endfor %}
-          {% if not is_state('input_boolean.den_fan_calibration_initialized', 'on') or not ns.valid or bounds[0] < 0 %}unknown
-          {% elif not is_number(raw) or raw | float < 0 %}unknown
-          {% elif raw | float < bounds[0] %}off
-          {% else %}
-            {% set labels = ['exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high', 'cool_low', 'cool_med', 'cool_high'] %}
-            {% set match = namespace(value='cool_high', found=false) %}
-            {% for i in range(1, bounds | length) %}
-              {% if not match.found and raw | float < bounds[i] %}
-                {% set match.value = labels[i-1] %}{% set match.found = true %}
-              {% endif %}
-            {% endfor %}
-            {{ match.value }}
-          {% endif %}
+        state: "{% set seen = states('sensor.den_fan_power_candidates').split('|') %}{% set known = states('input_select.den_fan_confirmed_state') %}{{ known if known in seen and known != 'unknown' else 'unknown' }}"
         attributes:
           power_sensor: "sensor.den_fan_power"
           calibration_prefix: "den_fan"
-          manual_control: true
+          manual_control: "{{ true }}"
           controller_script: "script.den_fan_set_state"
           status_sensor: "sensor.den_fan_control_status"
           temperature_sensor: "sensor.den_temperature"
           humidity_sensor: "sensor.den_humidity"
-          off_below: "{{ states('input_number.den_fan_watts_off_below') | float(0) }}"
-          exhaust_low_upper: "{{ states('input_number.den_fan_watts_exhaust_low_upper') | float(0) }}"
-          exhaust_med_upper: "{{ states('input_number.den_fan_watts_exhaust_med_upper') | float(0) }}"
-          exhaust_high_upper: "{{ states('input_number.den_fan_watts_exhaust_high_upper') | float(0) }}"
-          circulate_low_upper: "{{ states('input_number.den_fan_watts_circulate_low_upper') | float(0) }}"
-          circulate_med_upper: "{{ states('input_number.den_fan_watts_circulate_med_upper') | float(0) }}"
-          circulate_high_upper: "{{ states('input_number.den_fan_watts_circulate_high_upper') | float(0) }}"
-          cool_low_upper: "{{ states('input_number.den_fan_watts_cool_low_upper') | float(0) }}"
-          cool_med_upper: "{{ states('input_number.den_fan_watts_cool_med_upper') | float(0) }}"
+          calibration_kind: "ranges"
+          calibration_ranges: "{{ {\"cool_low\": [46, 47], \"cool_med\": [48, 50], \"cool_high\": [50, 53], \"exhaust_low\": [32, 33], \"exhaust_med\": [34, 35], \"exhaust_high\": [35, 38], \"circulate_low\": [39, 40], \"circulate_med\": [42, 43], \"circulate_high\": [44, 46]} }}"
+          controller_version: "1.5.0"
+          range_tolerance: "{{ 0.5 }}"
+          confirm_script: "script.den_fan_confirm_state"
+          confidence: "{{ 'unconfirmed' if is_state('sensor.den_fan_state','unknown') else ('tracked' if '|' in states('sensor.den_fan_power_candidates') else 'measured') }}"
       - name: "Den Fan Control Status"
         unique_id: "den_fan_control_status"
         icon: "mdi:fan-auto"
-        state: "{{ states('input_text.den_fan_reason') }}"
+        state: "{% if (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now().timestamp() %}Manual hold{% elif states('input_text.den_fan_reason').startswith('Manual') %}Manual hold ended; awaiting Auto evaluation{% else %}{{ states('input_text.den_fan_reason') }}{% endif %}"
         attributes:
-          manual_until_timestamp: "{{ state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0) }}"
-          manual_active: "{{ state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0) > now().timestamp() }}"
+          manual_until_timestamp: "{{ (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) }}"
+          manual_active: "{{ (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now().timestamp() }}"
           error: "{{ states('input_text.den_fan_error') }}"
           requested_mode: "{{ states('input_select.den_fan_requested_mode') }}"
+          requested_speed: "{{ states('input_select.den_fan_requested_speed') }}"
+          cycle: "{{ states('input_select.den_fan_cycle') }}"
+          cycle_end_timestamp: "{{ (state_attr('input_datetime.den_fan_cycle_end', 'timestamp') | float(0)) }}"
+          blocked: "{{ is_state('input_boolean.den_fan_command_fault','on') }}"
+          controller_version: "1.5.0"
 script:
   den_fan_set_state:
     alias: "Den Fan - Serialized Controller"
     mode: "queued"
-    max: 5
+    max: 10
     max_exceeded: "silent"
-    description: "All card and automation requests enter this queue. Automatic control uses High; manual selections hold for 30 minutes. Never turns the fan off."
+    trace:
+      stored_traces: 20
     fields:
       event:
-        name: "Request source"
         selector:
           select:
             options:
               - "evaluate"
+              - "observe"
+              - "startup"
               - "manual"
               - "resume_auto"
-              - "tv_off"
-              - "observed_cool"
-              - "bedtime_check"
+              - "synchronize"
       target_function:
-        name: "Manual mode request"
         selector:
           select:
             options:
@@ -194,7 +139,6 @@ script:
               - "exhaust"
               - "circulate"
       target_speed:
-        name: "Manual speed request"
         selector:
           select:
             options:
@@ -209,359 +153,555 @@ script:
             remote: "remote.den_fan_remote"
             device: "Den Fan"
             mode_command: "mode_toggle"
-            press_delay: 1.5
+            speed_command: "speed_toggle"
+            power_command: ""
             temperature: "sensor.den_temperature"
             humidity: "sensor.den_humidity"
-            power_command: ""
-            speed_command: "speed_toggle"
+            manual_minutes: 120
+            cool_at: 78
+            cool_stop: 74
+            max_rh: 70
+            burst_minutes: 30
+            recovery_minutes: 15
             feedback_timeout: 60
-            settle_seconds: 2
-            retry_seconds: 300
-            power_max_age: 0
-            room_max_age: 900
-            manual_minutes: 30
-            minimum_mode_seconds: 1200
-            exhaust_above: 65
-            cool_below: 62
-            cool_above: 72
-      - if:
-          - condition: "template"
-            value_template: "{{ not is_state('input_boolean.den_fan_calibration_initialized', 'on') }}"
-        then:
-          - action: "input_number.set_value"
-            target:
-              entity_id: "input_number.den_fan_watts_off_below"
-            data:
-              value: 10
-          - action: "input_number.set_value"
-            target:
-              entity_id: "input_number.den_fan_watts_exhaust_low_upper"
-            data:
-              value: 32
-          - action: "input_number.set_value"
-            target:
-              entity_id: "input_number.den_fan_watts_exhaust_med_upper"
-            data:
-              value: 34.5
-          - action: "input_number.set_value"
-            target:
-              entity_id: "input_number.den_fan_watts_exhaust_high_upper"
-            data:
-              value: 37
-          - action: "input_number.set_value"
-            target:
-              entity_id: "input_number.den_fan_watts_circulate_low_upper"
-            data:
-              value: 41
-          - action: "input_number.set_value"
-            target:
-              entity_id: "input_number.den_fan_watts_circulate_med_upper"
-            data:
-              value: 44
-          - action: "input_number.set_value"
-            target:
-              entity_id: "input_number.den_fan_watts_circulate_high_upper"
-            data:
-              value: 46
-          - action: "input_number.set_value"
-            target:
-              entity_id: "input_number.den_fan_watts_cool_low_upper"
-            data:
-              value: 48
-          - action: "input_number.set_value"
-            target:
-              entity_id: "input_number.den_fan_watts_cool_med_upper"
-            data:
-              value: 50
-          - action: "input_boolean.turn_on"
-            target:
-              entity_id: "input_boolean.den_fan_calibration_initialized"
-          - delay:
-              seconds: 1
+            stable_seconds: 8
+            off_seconds: 15
+            off_below: 10
+            range_tolerance: 0.5
+            boot_state: "cool_low"
+            ranges:
+              cool_low:
+                - 46
+                - 47
+              cool_med:
+                - 48
+                - 50
+              cool_high:
+                - 50
+                - 53
+              exhaust_low:
+                - 32
+                - 33
+              exhaust_med:
+                - 34
+                - 35
+              exhaust_high:
+                - 35
+                - 38
+              circulate_low:
+                - 39
+                - 40
+              circulate_med:
+                - 42
+                - 43
+              circulate_high:
+                - 44
+                - 46
+            press_delay: 1.5
       - variables:
-          event: "{{ event | default('manual' if target_function is defined or target_speed is defined else 'evaluate') }}"
+          event: "{{ event | default('evaluate') }}"
           requested: "{{ target_function | default('') }}"
           requested_speed: "{{ target_speed | default('') }}"
           now_ts: "{{ now().timestamp() }}"
-          temp: "{% set v = states(cfg.temperature) %}{{ (v | float * 9 / 5 + 32 if state_attr(cfg.temperature, 'unit_of_measurement') == '°C' else v | float) if is_number(v) else 0 }}"
-          rh: "{{ states(cfg.humidity) | float(0) }}"
-          previous_mode: "{{ states('input_select.den_fan_requested_mode') }}"
-      - variables:
-          climate_valid: >-
-            {% set ns = namespace(ok=true) %}
-            {% for id in [cfg.temperature, cfg.humidity] %}
-              {% set age = cfg.room_max_age %}
-              {% if not is_number(states(id)) %}{% set ns.ok = false %}
-              {% elif now().timestamp() - as_timestamp(states[id].last_reported, 0) > age %}{% set ns.ok = false %}{% endif %}
-            {% endfor %}
-            {{ ns.ok and 0 <= rh <= 100 and -100 < temp < 150 }}
-      - variables:
-          has_sleep: false
-          sleep: false
-          sleep_end: 0
+          boot_recovered: "{{ false }}"
       - if:
           - condition: "template"
-            value_template: "{{ event == 'manual' and (requested not in ['', 'cool', 'exhaust', 'circulate'] or requested_speed not in ['', 'low', 'med', 'high']) }}"
+            value_template: "{{ event == 'manual' and (requested not in ['', 'cool','exhaust','circulate'] or requested_speed not in ['', 'low','med','high'] or (requested == '' and requested_speed == '')) }}"
         then:
-          - action: "input_text.set_value"
-            target:
-              entity_id: "input_text.den_fan_error"
-            data:
-              value: "Invalid manual mode or speed."
+          - stop: "Invalid manual request."
+      - if:
+          - condition: "template"
+            value_template: "{{ event in ['manual','synchronize'] }}"
+        then:
           - action: "input_datetime.set_datetime"
             target:
-              entity_id: "input_datetime.den_fan_retry_after"
+              entity_id: "input_datetime.den_fan_manual_until"
             data:
-              timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-          - stop: "Invalid manual mode or speed."
-            error: true
-      - variables:
-          manual_request: "{{ event == 'manual' and (requested != '' or requested_speed != '') }}"
-          observed_state: "{{ states('sensor.den_fan_state') }}"
-      - if:
-          - condition: "template"
-            value_template: "{{ manual_request and observed_state not in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (requested == '' or requested_speed == '') }}"
-        then:
-          - action: "input_text.set_value"
+              timestamp: "{{ now_ts + cfg.manual_minutes * 60 }}"
+          - action: "input_select.select_option"
             target:
-              entity_id: "input_text.den_fan_error"
+              entity_id: "input_select.den_fan_cycle"
             data:
-              value: "Fan state unavailable; cannot preserve the other mode/speed setting. Check power and calibration."
+              option: "normal"
           - action: "input_datetime.set_datetime"
             target:
-              entity_id: "input_datetime.den_fan_retry_after"
+              entity_id: "input_datetime.den_fan_cycle_end"
             data:
-              timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-          - stop: "Fan state unavailable; cannot preserve the other mode/speed setting. Check power and calibration."
-            error: true
+              timestamp: "{{ now_ts }}"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_reason"
+            data:
+              value: "Manual hold"
       - if:
           - condition: "template"
-            value_template: "{{ event == 'resume_auto' or (false) or (false) }}"
+            value_template: "{{ event == 'resume_auto' }}"
         then:
           - action: "input_datetime.set_datetime"
             target:
               entity_id: "input_datetime.den_fan_manual_until"
             data:
               timestamp: "{{ now_ts }}"
-      - if:
-          - condition: "template"
-            value_template: "{{ manual_request }}"
-        then:
-          - variables:
-              selected_mode: "{{ requested if requested != '' else observed_state.split('_')[0] }}"
-              selected_speed: "{{ requested_speed if requested_speed != '' else ('high' if (false) else observed_state.split('_')[1]) }}"
           - action: "input_select.select_option"
             target:
-              entity_id: "input_select.den_fan_manual_mode"
+              entity_id: "input_select.den_fan_cycle"
             data:
-              option: "{{ selected_mode }}"
-          - action: "input_select.select_option"
-            target:
-              entity_id: "input_select.den_fan_manual_speed"
-            data:
-              option: "{{ selected_speed }}"
+              option: "normal"
           - action: "input_datetime.set_datetime"
             target:
-              entity_id: "input_datetime.den_fan_manual_until"
+              entity_id: "input_datetime.den_fan_cycle_end"
             data:
-              timestamp: "{{ now_ts + cfg.manual_minutes * 60 }}"
-      - variables:
-          manual_active: "{{ state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0) > now_ts }}"
-          desired_speed: "{{ states('input_select.den_fan_manual_speed') if state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0) > now_ts else 'high' }}"
-      - variables:
-          plan: >-
-            {# The whole climate policy. Three rules, in order:
-            
-                 humidity at or above exhaust_above          -> Exhaust   (get moisture out)
-                 humidity at or below cool_below, room warm  -> Cool      (bring temp down)
-                 anything else                               -> hold      (leave it alone)
-            
-               Between cool_below and exhaust_above nothing is requested, which is what
-               stops the fan cycling: Cool draws outdoor air and raises room humidity, so
-               any single threshold makes Cool and Exhaust trigger each other. The mode
-               defaults to whatever is already running - a change has to be asked for.
-            
-               The bedroom adds one override: a latched sleep lock. Nothing else does. #}
-            {% set p = namespace(
-              mode=previous_mode if previous_mode in ['cool', 'exhaust'] else 'exhaust',
-              sleep=sleep, sleep_end=sleep_end, reason='') %}
-            {% if has_sleep %}
-              {% set overnight = clock >= bedtime_clock or clock < morning_clock %}
-              {% set event_overnight = event_clock >= bedtime_clock or event_clock < morning_clock %}
-              {% if p.sleep and (now_ts >= p.sleep_end or not overnight) %}
-                {% set p.sleep = false %}{% set p.sleep_end = 0 %}
-              {% endif %}
-              {% if overnight and ((event_overnight and (event == 'tv_off' or event == 'observed_cool'
-                  or (event == 'manual' and requested == 'cool')))
-                  or (event == 'bedtime_check' and tv_off_now)) %}
-                {% set p.sleep = true %}{% set p.sleep_end = next_morning %}
-              {% endif %}
-            {% endif %}
-            {% if p.sleep %}
-              {% set p.mode = 'cool' %}
-              {% set p.reason = 'Sleep: Cool / High until ' ~ cfg.morning_time %}
-            {% elif not climate_valid %}
-              {% set p.mode = 'exhaust' %}
-              {% set p.reason = 'Exhaust: room reading missing, stale, or invalid' %}
-            {% elif rh >= cfg.exhaust_above %}
-              {% set p.mode = 'exhaust' %}
-              {% set p.reason = 'Exhaust: humidity ' ~ rh | round(1) ~ '% at or above ' ~ cfg.exhaust_above ~ '%' %}
-            {% elif rh <= cfg.cool_below and temp > cfg.cool_above %}
-              {% set p.mode = 'cool' %}
-              {% set p.reason = 'Cool: humidity ' ~ rh | round(1) ~ '% at or below ' ~ cfg.cool_below
-                ~ '% and room ' ~ temp | round(1) ~ ' F above ' ~ cfg.cool_above ~ ' F' %}
-            {% elif rh > cfg.cool_below %}
-              {% set p.reason = 'Holding ' ~ p.mode ~ ': humidity ' ~ rh | round(1) ~ '% between '
-                ~ cfg.cool_below ~ '% and ' ~ cfg.exhaust_above ~ '%' %}
-            {% else %}
-              {% set p.reason = 'Holding ' ~ p.mode ~ ': room ' ~ temp | round(1) ~ ' F at or below '
-                ~ cfg.cool_above ~ ' F, humidity ' ~ rh | round(1) ~ '%' %}
-            {% endif %}
-            {{ dict(mode=p.mode, sleep=p.sleep, sleep_end=p.sleep_end, reason=p.reason) }}
+              timestamp: "{{ now_ts }}"
       - if:
           - condition: "template"
-            value_template: "{{ manual_active }}"
+            value_template: "{{ event == 'startup' }}"
         then:
-          - variables:
-              plan: "{{ dict(plan, mode=states('input_select.den_fan_manual_mode'), reason='Manual: ' ~ states('input_select.den_fan_manual_mode') ~ ' / ' ~ desired_speed ~ '; Auto resumes after hold') }}"
-      - action: "input_text.set_value"
-        target:
-          entity_id: "input_text.den_fan_reason"
-        data:
-          value: "{{ plan.reason }}"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confirmed_state"
+            data:
+              option: "unknown"
+      - variables:
+          known: "{{ states('input_select.den_fan_confirmed_state') }}"
+          seen: "{{ states('sensor.den_fan_power_candidates').split('|') }}"
+          stable: "{{ now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed, 0) >= cfg.stable_seconds }}"
+          was_blocked: "{{ is_state('input_boolean.den_fan_command_fault','on') }}"
       - if:
           - condition: "template"
-            value_template: "{{ event == 'evaluate' and not manual_active and plan.mode != previous_mode and now_ts - (state_attr('input_datetime.den_fan_last_command_time', 'timestamp') | float(0)) < cfg.minimum_mode_seconds and states('sensor.den_fan_state') == previous_mode ~ '_high' }}"
+            value_template: "{{ seen == ['off'] }}"
         then:
+          - if:
+              - condition: "template"
+                value_template: "{{ now_ts - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed,0) >= cfg.off_seconds }}"
+            then:
+              - action: "input_boolean.turn_on"
+                target:
+                  entity_id: "input_boolean.den_fan_boot_pending"
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_confirmed_state"
+                data:
+                  option: "off"
+              - action: "script.den_fan_apply_state"
+                data:
+                  operation: "power_on"
           - action: "input_text.set_value"
             target:
               entity_id: "input_text.den_fan_reason"
             data:
-              value: "Waiting for minimum mode interval; reevaluating each minute"
-          - stop: "Avoid rapid changes between modes."
+              value: "Fan off; waiting for startup at Cool/Low"
+          - stop: "Waiting for fan startup."
+      - if:
+          - condition: "template"
+            value_template: "{{ is_state('input_boolean.den_fan_boot_pending','on') }}"
+        then:
+          - if:
+              - condition: "template"
+                value_template: "{{ stable and (is_number(states(cfg.power)) and cfg.boot_state in cfg.ranges and cfg.ranges[cfg.boot_state][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[cfg.boot_state][1] + cfg.range_tolerance) }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_confirmed_state"
+                data:
+                  option: "{{ cfg.boot_state }}"
+              - action: "input_boolean.turn_off"
+                target:
+                  entity_id: "input_boolean.den_fan_boot_pending"
+              - action: "input_boolean.turn_off"
+                target:
+                  entity_id: "input_boolean.den_fan_command_fault"
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_error"
+                data:
+                  value: ""
+              - variables:
+                  known: "{{ cfg.boot_state }}"
+                  was_blocked: "{{ false }}"
+                  boot_recovered: "{{ true }}"
+            else:
+              - stop: "Waiting for measured startup at Cool/Low."
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'synchronize' }}"
+        then:
+          - variables:
+              chosen: "{{ requested ~ '_' ~ requested_speed }}"
+          - if:
+              - condition: "template"
+                value_template: "{{ not (is_number(states(cfg.power)) and chosen in cfg.ranges and cfg.ranges[chosen][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[chosen][1] + cfg.range_tolerance) }}"
+            then:
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_error"
+                data:
+                  value: "Physical selection does not match the measured range."
+              - stop: "Synchronization rejected."
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confirmed_state"
+            data:
+              option: "{{ chosen }}"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_manual_mode"
+            data:
+              option: "{{ requested }}"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_manual_speed"
+            data:
+              option: "{{ requested_speed }}"
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: ""
+          - stop: "Physical setting confirmed; manual hold active. No remote commands sent."
+      - if:
+          - condition: "template"
+            value_template: "{{ not (is_number(states(cfg.power)) and known in cfg.ranges and cfg.ranges[known][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[known][1] + cfg.range_tolerance) }}"
+        then:
+          - if:
+              - condition: "template"
+                value_template: "{{ stable and seen | length == 1 and seen[0] in cfg.ranges }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_confirmed_state"
+                data:
+                  option: "{{ seen[0] }}"
+              - if:
+                  - condition: "template"
+                    value_template: "{{ known in cfg.ranges and not was_blocked and now_ts > (state_attr('input_datetime.den_fan_command_guard_until', 'timestamp') | float(0)) and event not in ['manual','resume_auto','startup'] }}"
+                then:
+                  - action: "input_select.select_option"
+                    target:
+                      entity_id: "input_select.den_fan_manual_mode"
+                    data:
+                      option: "{{ seen[0].split('_')[0] }}"
+                  - action: "input_select.select_option"
+                    target:
+                      entity_id: "input_select.den_fan_manual_speed"
+                    data:
+                      option: "{{ seen[0].split('_')[1] }}"
+                  - action: "input_datetime.set_datetime"
+                    target:
+                      entity_id: "input_datetime.den_fan_manual_until"
+                    data:
+                      timestamp: "{{ now_ts + cfg.manual_minutes*60 }}"
+                  - action: "input_select.select_option"
+                    target:
+                      entity_id: "input_select.den_fan_cycle"
+                    data:
+                      option: "normal"
+                  - action: "input_datetime.set_datetime"
+                    target:
+                      entity_id: "input_datetime.den_fan_cycle_end"
+                    data:
+                      timestamp: "{{ now_ts }}"
+                  - action: "input_text.set_value"
+                    target:
+                      entity_id: "input_text.den_fan_reason"
+                    data:
+                      value: "Manual hold: external fan change"
+              - variables:
+                  known: "{{ seen[0] }}"
+            else:
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_error"
+                data:
+                  value: "Fan state uncertain. Wait for a distinct reading or confirm the physical setting."
+              - stop: "No toggle commands sent."
+      - if:
+          - condition: "template"
+            value_template: "{{ event in ['manual','resume_auto'] }}"
+        then:
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: ""
+      - if:
+          - condition: "template"
+            value_template: "{{ is_state('input_boolean.den_fan_command_fault','on') }}"
+        then:
+          - stop: "Previous command failed. Automatic retries remain paused."
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'manual' or (boot_recovered and (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now_ts) }}"
+        then:
+          - if:
+              - condition: "template"
+                value_template: "{{ event == 'manual' }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_manual_mode"
+                data:
+                  option: "{{ requested if requested else known.split('_')[0] }}"
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_manual_speed"
+                data:
+                  option: "{{ requested_speed if requested_speed else known.split('_')[1] }}"
+          - variables:
+              desired_mode: "{{ states('input_select.den_fan_manual_mode') }}"
+              desired_speed: "{{ states('input_select.den_fan_manual_speed') }}"
+        else:
+          - if:
+              - condition: "template"
+                value_template: "{{ (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now_ts }}"
+            then:
+              - stop: "Manual hold: automatic output suspended."
+          - if:
+              - condition: "template"
+                value_template: "{{ event == 'observe' and not boot_recovered }}"
+            then:
+              - stop: "Observed state updated; climate evaluation runs once per minute."
+          - variables:
+              temp: "{% set n=states(cfg.temperature) %}{{ (n | float * 9/5+32 if state_attr(cfg.temperature,'unit_of_measurement') == '°C' else n | float) if is_number(n) else none }}"
+              rh: "{{ states(cfg.humidity) | float(none) }}"
+              cycle: "{{ states('input_select.den_fan_cycle') }}"
+              cycle_end: "{{ (state_attr('input_datetime.den_fan_cycle_end', 'timestamp') | float(0)) }}"
+          - if:
+              - condition: "template"
+                value_template: "{{ temp is none or rh is none or not (-100 < temp < 150 and 0 <= rh <= 100) }}"
+            then:
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_reason"
+                data:
+                  value: "Climate unavailable; keeping current fan setting"
+              - stop: "No climate decision with invalid data."
+          - variables:
+              plan: >-
+                {% set p=namespace(mode='exhaust',cycle=cycle,end=cycle_end,reason='Exhaust: continuous ventilation') %}
+                {% if p.cycle in ['burst','extended'] %}
+                  {% if temp <= cfg.cool_stop or (p.cycle == 'extended' and rh > cfg.max_rh) %}
+                    {% set p.cycle='recovery' %}{% set p.end=now_ts+cfg.recovery_minutes*60 %}
+                  {% elif now_ts >= p.end %}
+                    {% if rh <= cfg.max_rh %}{% set p.cycle='extended' %}{% set p.end=now_ts+cfg.burst_minutes*60 %}
+                    {% else %}{% set p.cycle='recovery' %}{% set p.end=now_ts+cfg.recovery_minutes*60 %}{% endif %}
+                  {% endif %}
+                {% endif %}
+                {% if p.cycle == 'recovery' and now_ts >= p.end %}{% set p.cycle='normal' %}{% set p.end=0 %}{% endif %}
+                {% if p.cycle in ['burst','extended'] %}{% set p.mode='cool' %}{% set p.reason='Cooling: heat relief' %}
+                {% elif p.cycle == 'recovery' %}{% set p.reason='Exhaust: recovery interval' %}
+                {% elif temp >= cfg.cool_at %}{% set p.mode='cool' %}{% set p.cycle='burst' %}{% set p.end=now_ts+cfg.burst_minutes*60 %}{% set p.reason='Cooling: room at temperature limit' %}
+                {% endif %}
+                {{ dict(mode=p.mode,cycle=p.cycle,end=p.end,reason=p.reason) }}
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_cycle"
+            data:
+              option: "{{ plan.cycle }}"
+          - action: "input_datetime.set_datetime"
+            target:
+              entity_id: "input_datetime.den_fan_cycle_end"
+            data:
+              timestamp: "{{ plan.end }}"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_reason"
+            data:
+              value: "{{ plan.reason }}"
+          - variables:
+              desired_mode: "{{ plan.mode }}"
+              desired_speed: "high"
       - action: "input_select.select_option"
         target:
           entity_id: "input_select.den_fan_requested_mode"
         data:
-          option: "{{ plan.mode }}"
+          option: "{{ desired_mode }}"
+      - action: "input_select.select_option"
+        target:
+          entity_id: "input_select.den_fan_requested_speed"
+        data:
+          option: "{{ desired_speed }}"
       - if:
           - condition: "template"
-            value_template: "{{ event == 'evaluate' and now_ts < (state_attr('input_datetime.den_fan_retry_after', 'timestamp') | float(0)) }}"
-        then:
-          - stop: "Waiting after an unconfirmed command; see controller error."
-      - variables:
-          target_state: "{{ plan.mode ~ '_' ~ desired_speed }}"
-      - if:
-          - condition: "template"
-            value_template: "{{ states('sensor.den_fan_state') == target_state and is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) }}"
+            value_template: "{{ known == desired_mode ~ '_' ~ desired_speed }}"
         then:
           - action: "input_text.set_value"
             target:
               entity_id: "input_text.den_fan_error"
             data:
               value: ""
-          - stop: "Target already confirmed; no remote presses needed."
-      - if:
-          - condition: "template"
-            value_template: "{{ not is_number(states(cfg.power)) or states(cfg.power) | float < 0 or (cfg.power_max_age > 0 and now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0) > cfg.power_max_age) }}"
-        then:
-          - action: "input_text.set_value"
-            target:
-              entity_id: "input_text.den_fan_error"
-            data:
-              value: "{{ 'Power unavailable or expired: ' ~ cfg.power ~ ' = ' ~ states(cfg.power) ~ '. Check the plug power sensor.' }}"
-          - action: "input_datetime.set_datetime"
-            target:
-              entity_id: "input_datetime.den_fan_retry_after"
-            data:
-              timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-          - stop: "{{ 'Power unavailable or expired: ' ~ cfg.power ~ ' = ' ~ states(cfg.power) ~ '. Check the plug power sensor.' }}"
-            error: true
-      - if:
-          - condition: "template"
-            value_template: "{{ states('sensor.den_fan_state') == 'off' }}"
-        then:
-          - if:
-              - condition: "template"
-                value_template: "{{ is_state(cfg.plug, 'off') }}"
-            then:
-              - action: "switch.turn_on"
-                target:
-                  entity_id: "switch.den_fan_plug"
-              - delay:
-                  seconds: 4
-          - if:
-              - condition: "template"
-                value_template: "{{ states('sensor.den_fan_state') == 'off' and cfg.power_command != '' }}"
-            then:
-              - action: "remote.send_command"
-                target:
-                  entity_id: "remote.den_fan_remote"
-                data:
-                  device: "Den Fan"
-                  command: "{{ cfg.power_command }}"
-                continue_on_error: true
-          - variables:
-              feedback_deadline: "{{ now().timestamp() + cfg.feedback_timeout }}"
-          - repeat:
-              sequence:
-                - delay:
-                    seconds: 1
-              until:
-                - condition: "template"
-                  value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) or now().timestamp() >= feedback_deadline }}"
-          - if:
-              - condition: "template"
-                value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) }}"
-            then:
-              - action: "input_text.set_value"
-                target:
-                  entity_id: "input_text.den_fan_error"
-                data:
-                  value: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.den_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
-              - action: "input_datetime.set_datetime"
-                target:
-                  entity_id: "input_datetime.den_fan_retry_after"
-                data:
-                  timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-              - stop: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.den_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
-                error: true
-      - if:
-          - condition: "template"
-            value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) }}"
-        then:
-          - action: "input_text.set_value"
-            target:
-              entity_id: "input_text.den_fan_error"
-            data:
-              value: "Unrecognized fan state; inspect the shared calibration ranges."
-          - action: "input_datetime.set_datetime"
-            target:
-              entity_id: "input_datetime.den_fan_retry_after"
-            data:
-              timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-          - stop: "Unrecognized fan state; inspect the shared calibration ranges."
-            error: true
-      - delay:
-          seconds: "{{ cfg.settle_seconds }}"
-      - if:
-          - condition: "template"
-            value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) }}"
-        then:
-          - action: "input_text.set_value"
-            target:
-              entity_id: "input_text.den_fan_error"
-            data:
-              value: "Power feedback became invalid before sending commands."
-          - action: "input_datetime.set_datetime"
-            target:
-              entity_id: "input_datetime.den_fan_retry_after"
-            data:
-              timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-          - stop: "Power feedback became invalid before sending commands."
-            error: true
+          - stop: "Requested setting already confirmed; no hardware actions."
+      - action: "input_boolean.turn_on"
+        target:
+          entity_id: "input_boolean.den_fan_command_fault"
+      - action: "input_text.set_value"
+        target:
+          entity_id: "input_text.den_fan_error"
+        data:
+          value: "Command in progress; if interrupted, confirm the fan setting before retrying."
+      - action: "script.den_fan_apply_state"
+        data:
+          target_function: "{{ desired_mode }}"
+          target_speed: "{{ desired_speed }}"
+  den_fan_apply_state:
+    alias: "Den Fan - Apply Confirmed State"
+    mode: "single"
+    trace:
+      stored_traces: 20
+    fields:
+      target_function:
+        selector:
+          select:
+            options:
+              - "cool"
+              - "exhaust"
+              - "circulate"
+      target_speed:
+        selector:
+          select:
+            options:
+              - "low"
+              - "med"
+              - "high"
+    sequence:
       - variables:
-          current_state: "{{ states('sensor.den_fan_state') }}"
+          cfg:
+            power: "sensor.den_fan_power"
+            plug: "switch.den_fan_plug"
+            remote: "remote.den_fan_remote"
+            device: "Den Fan"
+            mode_command: "mode_toggle"
+            speed_command: "speed_toggle"
+            power_command: ""
+            temperature: "sensor.den_temperature"
+            humidity: "sensor.den_humidity"
+            manual_minutes: 120
+            cool_at: 78
+            cool_stop: 74
+            max_rh: 70
+            burst_minutes: 30
+            recovery_minutes: 15
+            feedback_timeout: 60
+            stable_seconds: 8
+            off_seconds: 15
+            off_below: 10
+            range_tolerance: 0.5
+            boot_state: "cool_low"
+            ranges:
+              cool_low:
+                - 46
+                - 47
+              cool_med:
+                - 48
+                - 50
+              cool_high:
+                - 50
+                - 53
+              exhaust_low:
+                - 32
+                - 33
+              exhaust_med:
+                - 34
+                - 35
+              exhaust_high:
+                - 35
+                - 38
+              circulate_low:
+                - 39
+                - 40
+              circulate_med:
+                - 42
+                - 43
+              circulate_high:
+                - 44
+                - 46
+            press_delay: 1.5
+      - if:
+          - condition: "template"
+            value_template: "{{ operation | default('apply') == 'power_on' }}"
+        then:
+          - if:
+              - condition: "template"
+                value_template: "{{ states('sensor.den_fan_power_candidates') == 'off' and now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed,0) >= cfg.off_seconds }}"
+            then:
+              - if:
+                  - condition: "template"
+                    value_template: "{{ is_state(cfg.plug,'off') }}"
+                then:
+                  - action: "switch.turn_on"
+                    target:
+                      entity_id: "switch.den_fan_plug"
+                else:
+                  - if:
+                      - condition: "template"
+                        value_template: "{{ cfg.power_command != '' }}"
+                    then:
+                      - action: "remote.send_command"
+                        target:
+                          entity_id: "remote.den_fan_remote"
+                        data:
+                          device: "Den Fan"
+                          command: "{{ cfg.power_command }}"
+          - stop: "Power-on recovery requested; waiting for the startup reference."
+      - variables:
+          target: "{{ target_function ~ '_' ~ target_speed }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ target not in cfg.ranges }}"
+        then:
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confirmed_state"
+            data:
+              option: "unknown"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: "Invalid requested fan setting."
+          - stop: "Invalid requested fan setting."
+      - variables:
+          current: "{{ states('input_select.den_fan_confirmed_state') }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ not (is_number(states(cfg.power)) and current in cfg.ranges and cfg.ranges[current][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[current][1] + cfg.range_tolerance) }}"
+        then:
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confirmed_state"
+            data:
+              option: "unknown"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: "Current fan setting is uncertain. Confirm the physical setting before sending toggles."
+          - stop: "Current fan setting is uncertain. Confirm the physical setting before sending toggles."
+      - if:
+          - condition: "template"
+            value_template: "{{ current == target }}"
+        then:
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: ""
+          - stop: "Already at requested setting; no commands sent."
+      - variables:
           mode_order:
             - "cool"
             - "exhaust"
@@ -571,229 +711,236 @@ script:
             - "med"
             - "high"
       - variables:
-          mode_presses: "{{ (mode_order.index(plan.mode) - mode_order.index(current_state.split('_')[0])) % 3 }}"
-      - repeat:
+          mode_presses: "{{ (mode_order.index(target_function) - mode_order.index(current.split('_')[0])) % 3 }}"
+      - alias: "Confirm each mode press"
+        repeat:
           count: "{{ mode_presses }}"
           sequence:
+            - variables:
+                before: "{{ states('input_select.den_fan_confirmed_state') }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) }}"
+                  value_template: "{{ not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) }}"
               then:
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confirmed_state"
+                  data:
+                    option: "unknown"
                 - action: "input_text.set_value"
                   target:
                     entity_id: "input_text.den_fan_error"
                   data:
-                    value: "Invalid power feedback before a remote press."
-                - action: "input_datetime.set_datetime"
-                  target:
-                    entity_id: "input_datetime.den_fan_retry_after"
-                  data:
-                    timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-                - stop: "Invalid power feedback before a remote press."
-                  error: true
+                    value: "Power no longer supports the last confirmed setting. No further presses sent."
+                - stop: "Power no longer supports the last confirmed setting. No further presses sent."
             - variables:
-                before_state: "{{ states('sensor.den_fan_state') }}"
-            - variables:
-                expected_state: "{{ mode_order[(mode_order.index(before_state.split('_')[0])+1)%3] ~ '_' ~ before_state.split('_')[1] }}"
-                command_at: "{{ now().timestamp() }}"
-                feedback_deadline: "{{ now().timestamp() + cfg.feedback_timeout }}"
+                expected: "{{ mode_order[(mode_order.index(before.split('_')[0])+1)%3] ~ '_' ~ before.split('_')[1] }}"
+                sent_at: "{{ now().timestamp() }}"
+                deadline: "{{ now().timestamp() + cfg.feedback_timeout }}"
             - action: "input_datetime.set_datetime"
               target:
                 entity_id: "input_datetime.den_fan_command_guard_until"
               data:
-                timestamp: "{{ now().timestamp() + cfg.feedback_timeout + cfg.settle_seconds + 10 }}"
+                timestamp: "{{ deadline + cfg.stable_seconds + 5 }}"
             - action: "remote.send_command"
               target:
                 entity_id: "remote.den_fan_remote"
               data:
                 device: "Den Fan"
                 command: "mode_toggle"
-              continue_on_error: true
-            - delay:
-                seconds: "{{ cfg.press_delay }}"
             - repeat:
                 sequence:
                   - delay:
                       seconds: 1
                 until:
                   - condition: "template"
-                    value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.den_fan_state') == expected_state) or now().timestamp() >= feedback_deadline }}"
+                    value_template: "{{ (is_number(states(cfg.power)) and expected in cfg.ranges and cfg.ranges[expected][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[expected][1] + cfg.range_tolerance and not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) and as_timestamp(states[cfg.power].last_updated,0) > sent_at and now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed, 0) >= cfg.stable_seconds) or now().timestamp() >= deadline }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.den_fan_state') == expected_state) }}"
+                  value_template: "{{ not (is_number(states(cfg.power)) and expected in cfg.ranges and cfg.ranges[expected][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[expected][1] + cfg.range_tolerance and not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) and as_timestamp(states[cfg.power].last_updated,0) > sent_at and now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed, 0) >= cfg.stable_seconds) }}"
               then:
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confirmed_state"
+                  data:
+                    option: "unknown"
                 - action: "input_text.set_value"
                   target:
                     entity_id: "input_text.den_fan_error"
                   data:
-                    value: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.den_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
-                - action: "input_datetime.set_datetime"
-                  target:
-                    entity_id: "input_datetime.den_fan_retry_after"
-                  data:
-                    timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-                - stop: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.den_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
-                  error: true
-            - delay:
-                seconds: "{{ cfg.settle_seconds }}"
-            - if:
-                - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.den_fan_state') == expected_state) }}"
-              then:
-                - action: "input_text.set_value"
-                  target:
-                    entity_id: "input_text.den_fan_error"
-                  data:
-                    value: "Fan feedback did not settle at the expected state; stopping the sequence."
-                - action: "input_datetime.set_datetime"
-                  target:
-                    entity_id: "input_datetime.den_fan_retry_after"
-                  data:
-                    timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-                - stop: "Fan feedback did not settle at the expected state; stopping the sequence."
-                  error: true
+                    value: "{{ ('Unconfirmed ' ~ expected ~ ': ' ~ states(cfg.power) ~ ' W. Automatic retries paused; confirm the fan setting.')[:255] }}"
+                - stop: "{{ ('Unconfirmed ' ~ expected ~ ': ' ~ states(cfg.power) ~ ' W. Automatic retries paused; confirm the fan setting.')[:255] }}"
+            - action: "input_select.select_option"
+              target:
+                entity_id: "input_select.den_fan_confirmed_state"
+              data:
+                option: "{{ expected }}"
       - variables:
-          after_mode: "{{ states('sensor.den_fan_state') }}"
-      - if:
-          - condition: "template"
-            value_template: "{{ states('sensor.den_fan_state').split('_')[0] != plan.mode }}"
-        then:
-          - action: "input_text.set_value"
-            target:
-              entity_id: "input_text.den_fan_error"
-            data:
-              value: "Mode not confirmed; speed commands were not sent."
-          - action: "input_datetime.set_datetime"
-            target:
-              entity_id: "input_datetime.den_fan_retry_after"
-            data:
-              timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-          - stop: "Mode not confirmed; speed commands were not sent."
-            error: true
+          current: "{{ states('input_select.den_fan_confirmed_state') }}"
       - variables:
-          speed_presses: "{{ (speed_order.index(desired_speed) - speed_order.index(after_mode.split('_')[1])) % 3 }}"
-      - repeat:
+          speed_presses: "{{ (speed_order.index(target_speed) - speed_order.index(current.split('_')[1])) % 3 }}"
+      - alias: "Confirm each speed press"
+        repeat:
           count: "{{ speed_presses }}"
           sequence:
+            - variables:
+                before: "{{ states('input_select.den_fan_confirmed_state') }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age)) }}"
+                  value_template: "{{ not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) }}"
               then:
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confirmed_state"
+                  data:
+                    option: "unknown"
                 - action: "input_text.set_value"
                   target:
                     entity_id: "input_text.den_fan_error"
                   data:
-                    value: "Invalid power feedback before a remote press."
-                - action: "input_datetime.set_datetime"
-                  target:
-                    entity_id: "input_datetime.den_fan_retry_after"
-                  data:
-                    timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-                - stop: "Invalid power feedback before a remote press."
-                  error: true
+                    value: "Power no longer supports the last confirmed setting. No further presses sent."
+                - stop: "Power no longer supports the last confirmed setting. No further presses sent."
             - variables:
-                before_state: "{{ states('sensor.den_fan_state') }}"
-            - variables:
-                expected_state: "{{ before_state.split('_')[0] ~ '_' ~ speed_order[(speed_order.index(before_state.split('_')[1])+1)%3] }}"
-                command_at: "{{ now().timestamp() }}"
-                feedback_deadline: "{{ now().timestamp() + cfg.feedback_timeout }}"
+                expected: "{{ before.split('_')[0] ~ '_' ~ speed_order[(speed_order.index(before.split('_')[1])+1)%3] }}"
+                sent_at: "{{ now().timestamp() }}"
+                deadline: "{{ now().timestamp() + cfg.feedback_timeout }}"
             - action: "input_datetime.set_datetime"
               target:
                 entity_id: "input_datetime.den_fan_command_guard_until"
               data:
-                timestamp: "{{ now().timestamp() + cfg.feedback_timeout + cfg.settle_seconds + 10 }}"
+                timestamp: "{{ deadline + cfg.stable_seconds + 5 }}"
             - action: "remote.send_command"
               target:
                 entity_id: "remote.den_fan_remote"
               data:
                 device: "Den Fan"
                 command: "speed_toggle"
-              continue_on_error: true
-            - delay:
-                seconds: "{{ cfg.press_delay }}"
             - repeat:
                 sequence:
                   - delay:
                       seconds: 1
                 until:
                   - condition: "template"
-                    value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.den_fan_state') == expected_state) or now().timestamp() >= feedback_deadline }}"
+                    value_template: "{{ (is_number(states(cfg.power)) and expected in cfg.ranges and cfg.ranges[expected][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[expected][1] + cfg.range_tolerance and not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) and as_timestamp(states[cfg.power].last_updated,0) > sent_at and now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed, 0) >= cfg.stable_seconds) or now().timestamp() >= deadline }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.den_fan_state') == expected_state) }}"
+                  value_template: "{{ not (is_number(states(cfg.power)) and expected in cfg.ranges and cfg.ranges[expected][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[expected][1] + cfg.range_tolerance and not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) and as_timestamp(states[cfg.power].last_updated,0) > sent_at and now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed, 0) >= cfg.stable_seconds) }}"
               then:
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confirmed_state"
+                  data:
+                    option: "unknown"
                 - action: "input_text.set_value"
                   target:
                     entity_id: "input_text.den_fan_error"
                   data:
-                    value: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.den_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
-                - action: "input_datetime.set_datetime"
-                  target:
-                    entity_id: "input_datetime.den_fan_retry_after"
-                  data:
-                    timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-                - stop: "{{ 'Expected ' ~ (expected_state | default('running fan')) ~ '; read ' ~ states('sensor.den_fan_state') ~ ' at ' ~ states(cfg.power) ~ ' W. No more presses sent; check the power update and calibration.' }}"
-                  error: true
-            - delay:
-                seconds: "{{ cfg.settle_seconds }}"
-            - if:
-                - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and as_timestamp(states[cfg.power].last_updated, 0) > command_at and states('sensor.den_fan_state') == expected_state) }}"
-              then:
-                - action: "input_text.set_value"
-                  target:
-                    entity_id: "input_text.den_fan_error"
-                  data:
-                    value: "Fan feedback did not settle at the expected state; stopping the sequence."
-                - action: "input_datetime.set_datetime"
-                  target:
-                    entity_id: "input_datetime.den_fan_retry_after"
-                  data:
-                    timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-                - stop: "Fan feedback did not settle at the expected state; stopping the sequence."
-                  error: true
+                    value: "{{ ('Unconfirmed ' ~ expected ~ ': ' ~ states(cfg.power) ~ ' W. Automatic retries paused; confirm the fan setting.')[:255] }}"
+                - stop: "{{ ('Unconfirmed ' ~ expected ~ ': ' ~ states(cfg.power) ~ ' W. Automatic retries paused; confirm the fan setting.')[:255] }}"
+            - action: "input_select.select_option"
+              target:
+                entity_id: "input_select.den_fan_confirmed_state"
+              data:
+                option: "{{ expected }}"
       - if:
           - condition: "template"
-            value_template: "{{ not (is_number(states(cfg.power)) and states(cfg.power) | float >= 0 and states('sensor.den_fan_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and (cfg.power_max_age <= 0 or (now().timestamp() - as_timestamp(states[cfg.power].last_reported, 0)) <= cfg.power_max_age) and states('sensor.den_fan_state') == target_state) }}"
+            value_template: "{{ not (is_number(states(cfg.power)) and target in cfg.ranges and cfg.ranges[target][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[target][1] + cfg.range_tolerance) }}"
         then:
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confirmed_state"
+            data:
+              option: "unknown"
           - action: "input_text.set_value"
             target:
               entity_id: "input_text.den_fan_error"
             data:
-              value: "Final target was not confirmed."
-          - action: "input_datetime.set_datetime"
-            target:
-              entity_id: "input_datetime.den_fan_retry_after"
-            data:
-              timestamp: "{{ now().timestamp() + cfg.retry_seconds }}"
-          - stop: "Final target was not confirmed."
-            error: true
-      - action: "input_datetime.set_datetime"
-        target:
-          entity_id: "input_datetime.den_fan_command_guard_until"
-        data:
-          timestamp: "{{ now().timestamp() }}"
+              value: "Final setting is not supported by current power."
+          - stop: "Final setting is not supported by current power."
       - action: "input_datetime.set_datetime"
         target:
           entity_id: "input_datetime.den_fan_last_command_time"
         data:
           timestamp: "{{ now().timestamp() }}"
+      - action: "input_datetime.set_datetime"
+        target:
+          entity_id: "input_datetime.den_fan_command_guard_until"
+        data:
+          timestamp: "{{ now().timestamp()+cfg.stable_seconds+2 }}"
       - action: "input_text.set_value"
         target:
           entity_id: "input_text.den_fan_error"
         data:
           value: ""
+      - action: "input_boolean.turn_off"
+        target:
+          entity_id: "input_boolean.den_fan_command_fault"
+  den_fan_confirm_state:
+    alias: "Den Fan - Confirm Physical Setting"
+    mode: "queued"
+    description: "Select the setting verified on the physical fan. Sends no remote commands; starts a manual hold."
+    fields:
+      setting:
+        required: true
+        selector:
+          select:
+            options:
+              - "cool_low"
+              - "cool_med"
+              - "cool_high"
+              - "exhaust_low"
+              - "exhaust_med"
+              - "exhaust_high"
+              - "circulate_low"
+              - "circulate_med"
+              - "circulate_high"
+    sequence:
+      - if:
+          - condition: "template"
+            value_template: "{{ setting not in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] }}"
+        then:
+          - stop: "Invalid setting."
+      - action: "script.den_fan_set_state"
+        data:
+          event: "synchronize"
+          target_function: "{{ setting.split('_')[0] }}"
+          target_speed: "{{ setting.split('_')[1] }}"
 automation:
-  - alias: "Den Fan - Continuous Control"
-    id: "den_fan_continuous_control_v2"
-    mode: "single"
+  - id: "den_fan_continuous_control_v2"
+    alias: "Den Fan - Continuous Control"
+    mode: "queued"
+    max: 3
     max_exceeded: "silent"
+    trace:
+      stored_traces: 20
     triggers:
-      - trigger: "homeassistant"
-        event: "start"
       - trigger: "time_pattern"
         minutes: "/1"
+        id: "evaluate"
+      - trigger: "homeassistant"
+        event: "start"
+        id: "startup"
+      - trigger: "state"
+        entity_id: "sensor.den_fan_power_candidates"
+        for:
+          seconds: 15
+        id: "observe"
     actions:
       - action: "script.den_fan_set_state"
         data:
-          event: "evaluate"
+          event: "{{ trigger.id | default('evaluate') }}"
