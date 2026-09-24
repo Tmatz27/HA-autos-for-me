@@ -61,6 +61,9 @@ def state(e): return f"states('{e}')"
 def timestamp(e): return f"state_attr('{e}', 'timestamp') | float(0)"
 
 def build(room):
+    if room == 'den':
+        from den_controller import build as build_den
+        return build_den(HARDWARE[room])
     h=HARDWARE[room]; prefix=room+'_fan'; title=room.title()+' Fan'
     ent=lambda kind,key:f'{kind}.{prefix}_{key}'
     # Climate policy is three thresholds. Everything else here is hardware
@@ -287,6 +290,7 @@ for room in HARDWARE:
 # No fan-off commands. All external entity IDs are placeholders.
 # Power-command name is optional and blank until you supply a learned on/off code.
 '''
+    if room == 'den': header = '# Den window fan controller 1.5.0. Replace the previous den package.\n# Configure HARDWARE in build.py and ranges/settings in den_controller.py, then regenerate.\n'
     (DEST/f'window_fan_{room}.yaml').write_text(header+dump(package)+'\n',encoding='utf-8')
     (EXAMPLES/f'{room}-card.yaml').write_text(dump({'type':'custom:window-fan-card','name':room.title()+' Window Fan',
        'fan_package':f'sensor.{room}_fan_state','setup_mode':'package'})+'\n',encoding='utf-8')

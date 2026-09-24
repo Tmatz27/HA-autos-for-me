@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0 — Den range feedback and single controller
+
+- Replace den boundary guessing with nine measured, potentially overlapping ranges and compatible confirmed history.
+- Route all fan output through one driver; require distinct, settled feedback after each press. Latch failed/interrupted commands instead of automatically retrying them.
+- Use verified Cool/Low physical startup recovery without automatically power-cycling the fan. HA restart alone does not imply physical restart.
+- Restore the configurable den 78°F/74°F cooling hysteresis, 30-minute heat-relief intervals, 70% RH extension limit and 15-minute Exhaust recovery. Manual holds default to two hours.
+- Add den range display and explicit physical-state confirmation to the card editor. Keep routine dashboard details collapsed.
+- Preserve current bedroom package, policy and configuration. Update den and card together; public packages are generic examples.
+
+
 ## 1.4.0
 
 - Replace both room policies with three rules, shared by one template: exhaust at or above 65% RH, cool at or below 62% RH when warmer than 72F, otherwise hold what is running.
