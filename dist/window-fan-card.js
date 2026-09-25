@@ -9,7 +9,7 @@
  * Standalone mode needs no helpers. Managed mode shares package state and commands.
  */
 
-const CARD_VERSION = "1.5.0";
+const CARD_VERSION = "1.6.0";
 
 const MODES = ["cool", "exhaust", "circulate"];
 const SPEEDS = ["low", "med", "high"];
@@ -340,7 +340,11 @@ class WindowFanCard extends HTMLElement {
       ${cfg.show_details && deadlineText ? `<div class="wfc-busy-note">Until ${escapeHtml(deadlineText)}</div>` : ''}
       ${cfg.managed ? `<div class="wfc-manual-row">${Number(status?.attributes?.manual_until_timestamp) > Date.now()/1000
         ? `<span>Manual · ${Math.ceil((Number(status.attributes.manual_until_timestamp)-Date.now()/1000)/60)} min</span><button type="button" data-action="resume">Resume Auto</button>`
-        : '<span>Auto</span>'}</div>` : ''}
+        : status?.attributes?.command_active
+          ? '<span>Applying setting</span>'
+          : status?.attributes?.blocked
+            ? '<span>Auto paused</span><button type="button" data-action="resume">Resume Auto</button>'
+            : '<span>Auto</span>'}</div>` : ''}
       ${this._busy ? `<div class="wfc-busy-note">Sending commands…</div>` : ""}
       <div class="wfc-busy-note wfc-error" role="alert"></div>
     `;
