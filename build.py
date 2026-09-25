@@ -290,8 +290,10 @@ for room in HARDWARE:
 # No fan-off commands. All external entity IDs are placeholders.
 # Power-command name is optional and blank until you supply a learned on/off code.
 '''
-    if room == 'den': header = '# Den window fan controller 1.5.0. Replace the previous den package.\n# Configure HARDWARE in build.py and ranges/settings in den_controller.py, then regenerate.\n'
+    if room == 'den': header = '# Den window fan controller 1.6.0. Replace the previous den package.\n# Configure HARDWARE in build.py and ranges/settings in den_controller.py, then regenerate.\n'
     (DEST/f'window_fan_{room}.yaml').write_text(header+dump(package)+'\n',encoding='utf-8')
     (EXAMPLES/f'{room}-card.yaml').write_text(dump({'type':'custom:window-fan-card','name':room.title()+' Window Fan',
        'fan_package':f'sensor.{room}_fan_state','setup_mode':'package'})+'\n',encoding='utf-8')
-print('Built both packages and both card configurations.')
+import dehumidifier_controller
+(DEST/'shared_dehumidifier.yaml').write_text('# Shared dehumidifier controller 1.6.0. Install once.\n'+dump(dehumidifier_controller.build())+'\n',encoding='utf-8')
+print('Built both fan packages, card configurations, and shared dehumidifier package.')

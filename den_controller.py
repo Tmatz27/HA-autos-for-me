@@ -6,7 +6,7 @@ from pathlib import Path
 import argparse
 import json
 
-VERSION = '1.5.0'
+VERSION = '1.6.0'
 MODES = ['cool', 'exhaust', 'circulate']
 SPEEDS = ['low', 'med', 'high']
 STATES = [f'{m}_{s}' for m in MODES for s in SPEEDS]
@@ -16,8 +16,9 @@ RANGES = {'cool_low': [46,47], 'cool_med': [48,50], 'cool_high': [50,53],
 DEFAULTS = dict(power='sensor.den_fan_power', plug='switch.den_fan_plug',
     remote='remote.den_fan_remote', device='Den Fan', mode_command='mode_toggle',
     speed_command='speed_toggle', power_command='', temperature='sensor.den_temperature',
-    humidity='sensor.den_humidity', manual_minutes=120, cool_at=78, cool_stop=74,
-    max_rh=70, burst_minutes=30, recovery_minutes=15, feedback_timeout=60,
+    humidity='sensor.den_humidity', manual_minutes=120, cool_at=70, cool_stop=68,
+    max_rh=65, heat_at=78, heat_stop=75, burst_minutes=30, recovery_minutes=10,
+    rapid_rise_points=8, feedback_timeout=60,
     stable_seconds=8, off_seconds=15, off_below=10, range_tolerance=0.5, boot_state='cool_low', ranges=RANGES)
 
 def t(s): return '{{ ' + s + ' }}'
@@ -84,12 +85,19 @@ def build(settings=None):
                  state=candidate_template),
             dict(name='Den Fan State',unique_id='den_fan_state',icon='mdi:fan',state=state_template,attributes=attributes),
             dict(name='Den Fan Control Status',unique_id='den_fan_control_status',icon='mdi:fan-auto',
-                 state=("{% if "+stamp('manual_until')+" > now().timestamp() %}Manual hold"
+                 state=("{% if is_state('input_boolean.den_fan_command_fault','on') %}"
+                        "{{ 'Applying fan setting' if is_state('script.den_fan_apply_state','on') else 'Automatic control paused: command not confirmed' }}"
+                        "{% elif "+stamp('manual_until')+" > now().timestamp() %}Manual hold"
                         "{% elif states('input_text.den_fan_reason').startswith('Manual') %}Manual hold ended; awaiting Auto evaluation"
                         "{% else %}{{ states('input_text.den_fan_reason') }}{% endif %}"),
                  attributes={'manual_until_timestamp':t(stamp('manual_until')),
                     'manual_active':t(stamp('manual_until')+' > now().timestamp()'),
-                    'error':t("states('input_text.den_fan_error')"),
+                    'error':("{% set message=states('input_text.den_fan_error') %}"
+                             "{{ 'Previous command interrupted. Select the physical setting or use Resume Auto to retry from confirmed feedback.' "
+                             "if message.startswith('Command in progress') and not is_state('script.den_fan_apply_state','on') else message }}"),
+                    'command_active':t("is_state('script.den_fan_apply_state','on')"),
+                    'humidity_restart_limit':HUMIDITY_LIMIT,
+                    'humidity_rise_10m':t("states('"+cfg['humidity']+"') | float - states('sensor.den_fan_humidity_min_10m') | float if is_number(states('"+cfg['humidity']+"')) and is_number(states('sensor.den_fan_humidity_min_10m')) else none"),
                     'requested_mode':t("states('input_select.den_fan_requested_mode')"),
                     'requested_speed':t("states('input_select.den_fan_requested_speed')"),
                     'cycle':t("states('input_select.den_fan_cycle')"),
@@ -100,13 +108,25 @@ def build(settings=None):
                  [('command_fault','Command Fault'),('boot_pending','Startup Pending')]},
        'input_select':{
          'den_fan_confirmed_state':{'name':'Den Fan Confirmed State','options':['unknown','off']+STATES},
-         'den_fan_cycle':{'name':'Den Fan Cycle','options':['normal','burst','extended','recovery']},
+         'den_fan_cycle':{'name':'Den Fan Cycle','options':['normal','burst','extended','recovery','cooling','heat_relief']},
          **{f'den_fan_{key}':{'name':'Den Fan '+key.replace('_',' ').title(),'options':options}
             for key,options in [('requested_mode',MODES),('requested_speed',SPEEDS),('manual_mode',MODES),('manual_speed',SPEEDS)]}},
        'input_datetime':{f'den_fan_{key}':{'name':'Den Fan '+key.replace('_',' ').title(),'has_date':True,'has_time':True}
            for key in ['manual_until','cycle_end','command_guard_until','last_command_time']},
        'input_text':{f'den_fan_{key}':{'name':'Den Fan '+key.title(),'max':255} for key in ['reason','error']},
-       'template':[{'sensor':sensor}]}
+       'template':[{'sensor':sensor}],
+       'sensor':[{'platform':'statistics','name':'Den Fan Humidity Min 10m',
+                  'unique_id':'den_fan_humidity_min_10m','entity_id':'sensor.den_fan_humidity_sample',
+                  'state_characteristic':'value_min','max_age':{'minutes':10},'sampling_size':600}]}
+    # The status limit uses the same temperature normalization as the controller.
+    sensor[-1]['attributes']['humidity_restart_limit'] = HUMIDITY_LIMIT.replace('TEMP_ENTITY',cfg['temperature'])
+    # Refresh an unchanged valid reading once per minute so the rolling window
+    # retains a baseline even with change-only humidity sensors.
+    sensor.insert(0,{'name':'Den Fan Humidity Sample','unique_id':'den_fan_humidity_sample',
+        'device_class':'humidity','unit_of_measurement':'%',
+        'availability':t("is_number(states('"+cfg['humidity']+"')) and 0 <= states('"+cfg['humidity']+"') | float <= 100"),
+        'state':t("states('"+cfg['humidity']+"') | float(none)"),
+        'attributes':{'sampled_at':t('now().isoformat()')}})
     if cfg.get('led_device'):
         package['template'].append({'switch':[{'name':'Den LED Strip','unique_id':'den_led_strip',
             'turn_on':[a('remote.send_command',cfg['remote'],{'device':cfg['led_device'],'command':'on'})],
@@ -209,8 +229,9 @@ def build(settings=None):
             [iff(stamp('manual_until')+' > now_ts',[halt('Manual hold: automatic output suspended.')]),
              iff("event == 'observe' and not boot_recovered",[halt('Observed state updated; climate evaluation runs once per minute.')]),
              v(temp="{% set n=states(cfg.temperature) %}{{ (n | float * 9/5+32 if state_attr(cfg.temperature,'unit_of_measurement') == '°C' else n | float) if is_number(n) else none }}",
-               rh="{{ states(cfg.humidity) | float(none) }}",cycle=t("states('input_select.den_fan_cycle')"),cycle_end=t(stamp('cycle_end'))),
-             iff('temp is none or rh is none or not (-100 < temp < 150 and 0 <= rh <= 100)',[
+               rh="{{ states(cfg.humidity) | float(none) }}",cycle=t("states('input_select.den_fan_cycle')"),cycle_end=t(stamp('cycle_end')),
+               rh_min="{{ states('sensor.den_fan_humidity_min_10m') | float(none) }}"),
+             iff('temp is none or not (-100 < temp < 150) or ((rh is none or not (0 <= rh <= 100)) and not (temp >= cfg.heat_at or (cycle == "heat_relief" and temp > cfg.heat_stop)))',[
                  txt('reason','Climate unavailable; keeping current fan setting'),halt('No climate decision with invalid data.')]),
              v(plan=POLICY),select('cycle',t('plan.cycle')),timestamp('cycle_end','plan.end'),txt('reason',t('plan.reason')),
              v(desired_mode=t('plan.mode'),desired_speed='high')]),
@@ -238,19 +259,37 @@ def build(settings=None):
       'actions':[a('script.den_fan_set_state',data={'event':t("trigger.id | default('evaluate')")})]}]
     return package
 
-POLICY="""{% set p=namespace(mode='exhaust',cycle=cycle,end=cycle_end,reason='Exhaust: continuous ventilation') %}
-{% if p.cycle in ['burst','extended'] %}
-  {% if temp <= cfg.cool_stop or (p.cycle == 'extended' and rh > cfg.max_rh) %}
-    {% set p.cycle='recovery' %}{% set p.end=now_ts+cfg.recovery_minutes*60 %}
-  {% elif now_ts >= p.end %}
-    {% if rh <= cfg.max_rh %}{% set p.cycle='extended' %}{% set p.end=now_ts+cfg.burst_minutes*60 %}
-    {% else %}{% set p.cycle='recovery' %}{% set p.end=now_ts+cfg.recovery_minutes*60 %}{% endif %}
+HUMIDITY_LIMIT="""{% set n=states('TEMP_ENTITY') %}
+{% if is_number(n) %}
+{% set temp=n | float * 9/5+32 if state_attr('TEMP_ENTITY','unit_of_measurement') == '°C' else n | float %}
+{{ (58 if temp <= 72 else 58+(temp-72) if temp <= 76 else 62+(temp-76)*1.5 if temp < 78 else 65) | round(1) }}
+{% else %}{{ none }}{% endif %}"""
+
+POLICY="""{% set p=namespace(mode='exhaust',cycle=cycle,end=cycle_end,reason='Exhaust: building a humidity buffer') %}
+{% set limit=58 if temp <= 72 else 58+(temp-72) if temp <= 76 else 62+(temp-76)*1.5 if temp < 78 else 65 %}
+{% set rapid=rh is not none and rh_min is not none and rh-rh_min > cfg.rapid_rise_points %}
+{% if temp >= cfg.heat_at or (cycle == 'heat_relief' and temp > cfg.heat_stop) %}
+  {% set p.mode='cool' %}{% set p.cycle='heat_relief' %}{% set p.reason='Cooling: heat priority until ' ~ cfg.heat_stop ~ '°F; humidity limits suspended' %}
+  {% if cycle != 'heat_relief' or now_ts >= p.end %}{% set p.end=now_ts+cfg.burst_minutes*60 %}{% endif %}
+{% else %}
+  {% if cycle in ['burst','extended','heat_relief'] %}{% set p.cycle='cooling' %}{% endif %}
+  {% if p.cycle == 'cooling' %}
+    {% if temp <= cfg.cool_stop or rh >= cfg.max_rh or rapid %}
+      {% set p.cycle='recovery' %}{% set p.end=now_ts+cfg.recovery_minutes*60 %}
+    {% else %}
+      {% set p.mode='cool' %}{% set p.reason='Cooling: working toward ' ~ cfg.cool_stop ~ '°F' %}
+      {% if now_ts >= p.end %}{% set p.end=now_ts+cfg.burst_minutes*60 %}{% endif %}
+    {% endif %}
   {% endif %}
-{% endif %}
-{% if p.cycle == 'recovery' and now_ts >= p.end %}{% set p.cycle='normal' %}{% set p.end=0 %}{% endif %}
-{% if p.cycle in ['burst','extended'] %}{% set p.mode='cool' %}{% set p.reason='Cooling: heat relief' %}
-{% elif p.cycle == 'recovery' %}{% set p.reason='Exhaust: recovery interval' %}
-{% elif temp >= cfg.cool_at %}{% set p.mode='cool' %}{% set p.cycle='burst' %}{% set p.end=now_ts+cfg.burst_minutes*60 %}{% set p.reason='Cooling: room at temperature limit' %}
+  {% if p.mode == 'exhaust' %}
+    {% if p.cycle == 'recovery' and now_ts >= p.end %}{% set p.cycle='normal' %}{% set p.end=0 %}{% endif %}
+    {% if p.cycle == 'recovery' %}{% set p.reason='Exhaust: drying; minimum recovery interval' %}
+    {% elif temp >= cfg.cool_at and rh <= limit and not rapid %}
+      {% set p.mode='cool' %}{% set p.cycle='cooling' %}{% set p.end=now_ts+cfg.burst_minutes*60 %}
+      {% set p.reason='Cooling: humidity buffer available' %}
+    {% elif temp >= cfg.cool_at %}{% set p.reason='Exhaust: drying toward ' ~ (limit | round(1)) ~ '% RH before cooling' %}
+    {% endif %}
+  {% endif %}
 {% endif %}
 {{ dict(mode=p.mode,cycle=p.cycle,end=p.end,reason=p.reason) }}"""
 

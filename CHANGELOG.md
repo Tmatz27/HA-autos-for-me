@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0 — Comfort cooling and shared dehumidification
+
+- Start ordinary den cooling at 70°F with a temperature-dependent humidity restart limit; cool toward 68°F. Stop ordinary cooling at 65% RH or a rise over eight percentage points within ten minutes.
+- Latch heat-priority Cool/High at 78°F until 75°F, overriding humidity and recovery limits. Reassessment timers never force a still-needed cooling run to end.
+- Keep two-hour manual holds, measured range feedback and the single hardware writer. Distinguish active commands from interrupted, paused control; offer Resume Auto for faults.
+- Add an independent shared dehumidifier schedule: 50% night, 60% day, explicit supported mode, no repeated unchanged commands, tank warnings at 75% and 100%, no restart attempts when full.
+- Preserve bedroom control. Public assets contain generalized mappings only.
+
 ## 1.5.0 — Den range feedback and single controller
 
 - Replace den boundary guessing with nine measured, potentially overlapping ranges and compatible confirmed history.
