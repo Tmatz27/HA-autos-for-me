@@ -1,0 +1,183 @@
+# Shared dehumidifier controller 1.6.0. Install once.
+input_text:
+  shared_dehumidifier_status:
+    name: "Shared Dehumidifier Status"
+    max: 255
+input_select:
+  shared_dehumidifier_tank_alert:
+    name: "Shared Dehumidifier Tank Alert"
+    options:
+      - "normal"
+      - "warning"
+      - "full"
+template:
+  - sensor:
+      - name: "Shared Dehumidifier Control Status"
+        unique_id: "shared_dehumidifier_control_status"
+        state: "{{ states('input_text.shared_dehumidifier_status') }}"
+        attributes:
+          device_humidity: "{{ states('sensor.hallway_dehumidifier_humidity') | float(none) }}"
+          tank_percent: "{{ states('sensor.hallway_dehumidifier_tank') | float(none) }}"
+          target_humidity: "{{ 50 if is_state('sun.sun','below_horizon') else 60 if is_state('sun.sun','above_horizon') else none }}"
+          controller_version: "1.6.0"
+automation:
+  - id: "shared_dehumidifier_control_v1"
+    alias: "Shared Dehumidifier - Schedule and Tank Alerts"
+    mode: "single"
+    max_exceeded: "silent"
+    trace:
+      stored_traces: 20
+    triggers:
+      - trigger: "homeassistant"
+        event: "start"
+      - trigger: "time_pattern"
+        minutes: "/5"
+      - trigger: "state"
+        entity_id: "sun.sun"
+        to:
+          - "above_horizon"
+          - "below_horizon"
+      - trigger: "state"
+        entity_id: "sensor.hallway_dehumidifier_tank"
+        for:
+          seconds: 30
+    actions:
+      - variables:
+          cfg:
+            entity: "humidifier.hallway_dehumidifier"
+            humidity: "sensor.hallway_dehumidifier_humidity"
+            tank: "sensor.hallway_dehumidifier_tank"
+            sun: "sun.sun"
+            night_target: 50
+            day_target: 60
+            mode: "Manual"
+      - variables:
+          tank: "{{ states(cfg.tank) | float(none) }}"
+          sun: "{{ states(cfg.sun) }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ tank is none or not (0 <= tank <= 100) }}"
+        then:
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.shared_dehumidifier_status"
+            data:
+              value: "Tank reading unavailable; automatic device commands paused"
+          - stop: "No assumed empty tank."
+      - if:
+          - condition: "template"
+            value_template: "{{ tank >= 100 }}"
+        then:
+          - if:
+              - condition: "template"
+                value_template: "{{ not is_state('input_select.shared_dehumidifier_tank_alert','full') }}"
+            then:
+              - action: "persistent_notification.create"
+                data:
+                  notification_id: "shared_dehumidifier_tank"
+                  title: "Dehumidifier tank full"
+                  message: "Empty and refit the tank. Dehumidification is unavailable until the tank is emptied."
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.shared_dehumidifier_tank_alert"
+                data:
+                  option: "full"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.shared_dehumidifier_status"
+            data:
+              value: "Tank full: empty it to restore drying"
+          - stop: "Native tank-full protection remains in charge; no restart commands."
+      - if:
+          - condition: "template"
+            value_template: "{{ tank >= 75 }}"
+        then:
+          - if:
+              - condition: "template"
+                value_template: "{{ states('input_select.shared_dehumidifier_tank_alert') not in ['warning','full'] }}"
+            then:
+              - action: "persistent_notification.create"
+                data:
+                  notification_id: "shared_dehumidifier_tank"
+                  title: "Dehumidifier tank at 75%"
+                  message: "Empty the tank soon. The dehumidifier will stop when it is full."
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.shared_dehumidifier_tank_alert"
+                data:
+                  option: "warning"
+        else:
+          - if:
+              - condition: "template"
+                value_template: "{{ not is_state('input_select.shared_dehumidifier_tank_alert','normal') }}"
+            then:
+              - action: "persistent_notification.dismiss"
+                data:
+                  notification_id: "shared_dehumidifier_tank"
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.shared_dehumidifier_tank_alert"
+                data:
+                  option: "normal"
+      - if:
+          - condition: "template"
+            value_template: "{{ sun not in ['above_horizon','below_horizon'] }}"
+        then:
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.shared_dehumidifier_status"
+            data:
+              value: "Sun state unavailable; retaining existing device settings"
+          - stop: "No guessed day/night target."
+      - variables:
+          target: "{{ cfg.night_target if sun == 'below_horizon' else cfg.day_target }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ states(cfg.entity) not in ['on','off'] }}"
+        then:
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.shared_dehumidifier_status"
+            data:
+              value: "Dehumidifier unavailable; waiting for connection"
+          - stop: "Device unavailable."
+      - if:
+          - condition: "template"
+            value_template: "{{ cfg.mode not in (state_attr(cfg.entity,'available_modes') or []) or not (state_attr(cfg.entity,'min_humidity') | float(101) <= target <= state_attr(cfg.entity,'max_humidity') | float(-1)) }}"
+        then:
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.shared_dehumidifier_status"
+            data:
+              value: "Configured mode or humidity target unsupported"
+          - stop: "Verify device capabilities."
+      - if:
+          - condition: "template"
+            value_template: "{{ state_attr(cfg.entity,\"mode\") != cfg.mode }}"
+        then:
+          - action: "humidifier.set_mode"
+            target:
+              entity_id: "humidifier.hallway_dehumidifier"
+            data:
+              mode: "{{ cfg.mode }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ state_attr(cfg.entity,\"humidity\") | float(-1) != target }}"
+        then:
+          - action: "humidifier.set_humidity"
+            target:
+              entity_id: "humidifier.hallway_dehumidifier"
+            data:
+              humidity: "{{ target }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ is_state(cfg.entity,'off') }}"
+        then:
+          - action: "humidifier.turn_on"
+            target:
+              entity_id: "humidifier.hallway_dehumidifier"
+      - action: "input_text.set_value"
+        target:
+          entity_id: "input_text.shared_dehumidifier_status"
+        data:
+          value: "{{ ('Night' if sun == 'below_horizon' else 'Day') ~ ': target ' ~ target ~ '% RH' ~ ('; tank needs emptying soon' if tank >= 75 else '') }}"
