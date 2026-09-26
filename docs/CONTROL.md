@@ -2,11 +2,15 @@
 
 All values below are configurable example settings. Temperatures are Fahrenheit; room sensors reporting Celsius are converted automatically. The schedule follows Home Assistant's configured local time.
 
-## Den controller in 1.5.0
+## Den controller in 1.6.0
 
 The den has one serialized controller (`script.den_fan_set_state`) and one hardware writer (`script.den_fan_apply_state`). Card requests, minute checks and settled observations all use this path. Routine climate decisions run once per minute. Observation triggers recognize changes but do not run a second climate policy.
 
-Automatic speed is always High. Start Cool at 78°F for 30 minutes; stop early at 74°F. Extend at the deadline if still above 74°F and RH ≤70%. Extended cooling stops at 74°F or RH >70%. After cooling, Exhaust runs for 15 minutes before another burst. Otherwise Exhaust runs continuously. An initial heat-relief burst can run above 70% RH; recovery still applies if the room remains hot. These are targets, not guarantees. Outside conditions do not veto cooling.
+Automatic speed is High. Ordinary cooling starts at 70°F when humidity is at or below the restart limit: 58% through 72°F, 60% at 74°F, 62% at 76°F, and 65% at 78°F, interpolated between points. Once started, cooling continues toward 68°F until RH reaches 65% or rises by more than eight percentage points from a recorded low within the preceding ten minutes. Drying requires at least ten minutes of Exhaust and continues until the temperature-dependent humidity limit is met. There is no maximum drying time.
+
+At 78°F, heat priority immediately overrides ordinary humidity limits, the rapid-rise guard and the Exhaust recovery timer. Cool/High stays latched until temperature reaches 75°F. At 75°F the ordinary cooling stop conditions apply; if humidity is acceptable, cooling may continue toward 68°F. Thirty-minute deadlines are reassessment points, not forced mode changes. A two-hour manual hold still overrides all automatic output. Ordinary decisions need valid indoor temperature and humidity; heat priority may run without a humidity reading when temperature is valid. Neither outdoor temperature nor outdoor relative humidity blocks cooling. No outdoor measurements are required by this policy.
+
+The ten-minute humidity minimum uses a valid indoor humidity sample refreshed at least once per minute, including unchanged readings. Sensor availability must reflect disconnection; an available but stale source cannot be distinguished from an unchanged measurement. The 65% stop remains active while a new history window warms up. Climate evaluation runs once per minute; no continuous climate polling is used.
 
 Manual card selections preserve the other axis and suspend automatic output for 120 minutes. New selections restart that deadline; normal checks and HA restarts do not. Resume Auto ends it early. A uniquely detected physical-remote change also starts a hold; overlapping readings cannot always reveal an external change.
 
@@ -20,7 +24,7 @@ Configure mappings in `build.py` and den settings/ranges in `den_controller.py`,
 
 `range_tolerance` defaults to ±0.5 W for rounded measurements. It expands each range and can increase overlap; it never resolves overlap by choosing the nearest label. Compatible confirmed history is retained. Without that history, overlapping or out-of-range readings remain Unknown. The editor shows all nine ranges. **Confirm fan setting** records a setting verified on the appliance, checks that its reading is compatible, sends no remote commands, and starts a manual hold.
 
-After each independent toggle, a new live power update must fit the expected range, exclude the previous range, and settle for eight seconds; timeout is 60 seconds. Failed or interrupted commands latch a fault: automatic checks cannot retry repeatedly. A deliberate card request, Resume Auto, physical confirmation or a confirmed real startup can recover when a usable state is available. Deliberate retries are not permission to guess an ambiguous starting state. Unavailable power blocks commands; unavailable climate values suspend climate output. Numeric unchanged values do not expire just because the number stays the same. Configure integration availability so disconnected sensors become unavailable.
+After each independent toggle, a new live power update must fit the expected range, exclude the previous range, and settle for eight seconds; timeout is 60 seconds. Failed or interrupted commands latch a fault: automatic checks cannot retry repeatedly. A deliberate card request, Resume Auto, physical confirmation or a confirmed real startup can recover when a usable state is available. Deliberate retries are not permission to guess an ambiguous starting state. Unavailable power blocks commands; invalid temperature suspends climate output; missing humidity suspends ordinary climate decisions, but does not block temperature-confirmed heat priority. Numeric unchanged values do not expire just because the number stays the same. Configure integration availability so disconnected sensors become unavailable.
 
 The example startup reference is Cool/Low. **Verify this on the actual model before enabling startup recovery.** A power reading below 10 W for 15 seconds marks a real off state, excluding brief transition dips. When subsequent power settles in the startup range, the controller establishes that reference and restores Auto or the unexpired manual target. It never turns the fan or plug off to synchronize. An HA restart alone is not a physical restart: state is reacquired from a distinct reading or physical confirmation. If the plug is off, it can be turned on. If the appliance is off while the plug is on, the optional learned power command must be configured or the fan started physically.
 
@@ -28,7 +32,21 @@ Five-minute min/mean/max history values are aggregated statistics, not extra liv
 
 ### Den migration
 
-Replace the old den package rather than adding a second copy. Disable separately copied den automations. Keep Den Fan Continuous Control disabled while replacing the package, updating the card, checking HA configuration and restarting. Existing disabled automation state may remain disabled after restart. Verify manual commands against physical indicators, then enable this one automation and use Resume Auto. Existing old calibration helpers are no longer read by the den controller. Do not replace an installation's bedroom package for this den update. Failed commands retain traces under both den scripts.
+Replace the old den package rather than adding a second copy. Disable separately copied den automations. Keep Den Fan Continuous Control disabled while replacing the package, updating the card, checking HA configuration and restarting. Existing disabled automation state may remain disabled after restart. Verify manual commands against physical indicators, then enable this one automation and use Resume Auto. Existing old calibration helpers are no longer read by the den controller. Do not replace an installation's bedroom package for this den update. Failed commands retain traces under both den scripts. The new card reports Auto paused after interruption and exposes Resume Auto even without a manual hold. A retry requires usable measured state; it does not clear uncertainty by guessing.
+
+
+### Shared dehumidifier
+
+Install `packages/shared_dehumidifier.yaml` once. Configure `entity`, `humidity`, `tank`, `sun`, `mode`, `night_target` and `day_target` in `dehumidifier_controller.py`, or supply those keys in a private JSON file to its CLI. Keep private files outside this repository. Set `mode` to the exact humidity-target mode supported by the integration (the example is `Manual`). Verify the integration's `available_modes`, `min_humidity` and `max_humidity` first.
+
+Night (`sun.sun = below_horizon`) targets 50%; day (`above_horizon`) targets 60%. Five-minute checks reconcile settings; sun transitions and a tank state stable for 30 seconds trigger earlier checks. Commands are sent only when mode, humidity target or power differ. It leaves the fan-speed control alone and lets the appliance's humidistat cycle its compressor. Disabling the automation stops reconciliation but does not turn the appliance off.
+
+A persistent HA notification appears at 75% tank level, escalates at 100%, and clears below 75% after emptying. A restored alert level prevents repeated notifications every five minutes. At full tank, no device commands are sent; native tank protection remains active. Invalid/unavailable tank readings also pause device commands. Unknown sun state retains existing settings. An unavailable device is retried on a later check. This example assumes a manually emptied tank; verify the behavior before using it with an automatic drain/pump.
+
+The dehumidifier has one owner independent of both fan controllers. It uses its own humidity sensor for status, never its temperature. An open airflow path affects how much it can dry adjacent rooms; a closed door can isolate a room. Target settings cannot guarantee room humidity or temperature.
+
+Official action references: [humidifier](https://www.home-assistant.io/integrations/humidifier/) and [statistics](https://www.home-assistant.io/integrations/statistics/).
+
 
 ## Bedroom climate policy
 
