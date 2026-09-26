@@ -128,7 +128,9 @@ class Harness:
                 if name.startswith('input_boolean.'):
                     self.put(entity,'on' if name.endswith('turn_on') else 'off')
                 elif name=='input_number.set_value': self.put(entity,data['value'])
-                elif name=='input_select.select_option': self.put(entity,data['option'])
+                elif name=='input_select.select_option':
+                    assert data['option'] in self.package['input_select'][entity.split('.')[1]]['options']
+                    self.put(entity,data['option'])
                 elif name=='input_text.set_value': self.put(entity,data['value'])
                 elif name=='input_datetime.set_datetime':
                     t=float(data['timestamp']); self.put(entity,datetime.fromtimestamp(t,TZ).strftime('%Y-%m-%d %H:%M:%S'),{'timestamp':t})
@@ -144,9 +146,18 @@ class Harness:
                         self.mode,self.speed='cool','low'; self.pending.append((self.now+timedelta(seconds=2),self.motor_watts['cool_low']))
                 elif name.startswith('script.'):
                     nested=self.package['script'][name.split('.')[1]]
+                    self.put(name,'on')
                     try: self.execute(nested['sequence'],dict(data))
                     except Halt as result:
                         if result.error: raise
+                    finally: self.put(name,'off')
+                elif name.startswith('persistent_notification.'): pass
+                elif name.startswith('humidifier.'):
+                    attrs=dict(self.states[entity].attributes)
+                    if name=='humidifier.set_mode': attrs['mode']=data['mode']
+                    elif name=='humidifier.set_humidity': attrs['humidity']=data['humidity']
+                    elif name!='humidifier.turn_on': raise AssertionError(name)
+                    self.put(entity,'on' if name=='humidifier.turn_on' else self.states(entity),attrs)
                 else: raise AssertionError('Unexpected action: '+str(name))
                 self.refresh()
             else: raise AssertionError('Unhandled script action: '+str(item))
@@ -154,7 +165,8 @@ class Harness:
         self.put('script.'+self.prefix+'_set_state','on')
         try: self.execute(self.script['sequence'],dict(fields)); self.halt=None
         except Halt as e: self.halt=e
-        finally: self.put('script.'+self.prefix+'_set_state','off')
+        finally:
+            self.put('script.'+self.prefix+'_set_state','off'); self.refresh()
         return self
     @property
     def remote_calls(self): return [c for c in self.calls if c[0]=='remote.send_command']
@@ -162,7 +174,7 @@ class Harness:
     def error(self): return self.states('input_text.'+self.prefix+'_error')
 
 class Tests(unittest.TestCase):
-    def start(self,mode='exhaust',speed='high',temp=75,rh=45):
+    def start(self,mode='exhaust',speed='high',temp=69,rh=45):
         h=Harness('den',mode=mode,speed=speed)
         h.sensor('temperature',temp); h.sensor('humidity',rh)
         return h
@@ -233,15 +245,16 @@ class Tests(unittest.TestCase):
     def test_13_den_78_starts_cooling_even_with_old_unchanged_climate(self):
         h=self.start(temp=78,rh=52); h.reporting=False; h.advance(3600); h.run()
         self.assertEqual((h.mode,h.speed),('cool','high')); self.assertEqual(h.error,'')
-    def test_14_burst_extension_and_recovery(self):
-        h=self.start(temp=78,rh=52); h.run(); self.assertEqual(h.states('input_select.den_fan_cycle'),'burst')
+    def test_14_heat_priority_ignores_humidity_until_75(self):
+        h=self.start(temp=78,rh=52); h.run(); self.assertEqual(h.states('input_select.den_fan_cycle'),'heat_relief')
         h.sensor('temperature',76); h.advance(1801); h.run()
-        self.assertEqual(h.states('input_select.den_fan_cycle'),'extended')
-        h.sensor('humidity',71); h.run(); self.assertEqual(h.mode,'exhaust')
+        self.assertEqual(h.states('input_select.den_fan_cycle'),'heat_relief')
+        h.sensor('humidity',71); h.run(); self.assertEqual(h.mode,'cool')
+        h.sensor('temperature',75); h.run(); self.assertEqual(h.mode,'exhaust')
         self.assertEqual(h.states('input_select.den_fan_cycle'),'recovery')
-        h.sensor('temperature',79); h.advance(60); h.run(); self.assertEqual(h.mode,'exhaust')
-    def test_15_initial_burst_ends_early_at_74(self):
-        h=self.start(temp=78,rh=72); h.run(); h.sensor('temperature',74); h.run()
+        h.sensor('temperature',79); h.advance(60); h.run(); self.assertEqual(h.mode,'cool')
+    def test_15_heat_relief_ends_at_75_when_humid(self):
+        h=self.start(temp=78,rh=72); h.run(); h.sensor('temperature',75); h.run()
         self.assertEqual(h.mode,'exhaust'); self.assertEqual(h.states('input_select.den_fan_cycle'),'recovery')
     def test_16_unavailable_climate_does_not_create_fictitious_dry_reading(self):
         h=self.start('cool','high'); h.sensor('humidity','unavailable'); h.run()
@@ -259,7 +272,7 @@ class Tests(unittest.TestCase):
             for value in sensor.get('attributes',{}).values(): self.assertIsInstance(value,str)
     def test_20_restart_reconciles_expired_cycle(self):
         h=self.start(temp=79,rh=72); h.run(); h.advance(1801); h.run(event='startup')
-        self.assertEqual(h.states('input_select.den_fan_cycle'),'recovery'); self.assertEqual(h.mode,'exhaust')
+        self.assertEqual(h.states('input_select.den_fan_cycle'),'heat_relief'); self.assertEqual(h.mode,'cool')
     def test_21_transient_external_change_keeps_reference_for_manual_detection(self):
         h=self.start(); h.run(); h.advance(30)
         h.mode,h.speed='cool','high'; h.sensor('power',51); h.run(event='observe')
@@ -314,6 +327,75 @@ class Tests(unittest.TestCase):
         h.run()
         self.assertEqual((h.mode,h.speed),('cool','high'))
         self.assertEqual(h.error,'')
+
+    def test_28_dynamic_restart_thresholds_and_interpolation(self):
+        for temp,limit in [(70,58),(72,58),(73,59),(74,60),(75,61),(76,62),(77,63.5)]:
+            for rh,expected in [(limit,'cool'),(limit+0.1,'exhaust')]:
+                with self.subTest(temp=temp,rh=rh):
+                    h=self.start(temp=temp,rh=rh); h.run(); self.assertEqual(h.mode,expected)
+                    self.assertEqual(h.states['sensor.den_fan_control_status'].attributes['humidity_restart_limit'],limit)
+
+    def test_29_normal_cooling_latches_until_68_or_65_percent(self):
+        h=self.start(temp=72,rh=57); h.run()
+        h.sensor('temperature',69); h.sensor('humidity',63); h.advance(1801); h.run()
+        self.assertEqual(h.mode,'cool')
+        h.sensor('temperature',68); h.run(); self.assertEqual(h.mode,'exhaust')
+        h=self.start(temp=74,rh=59); h.run(); h.sensor('humidity',65); h.run()
+        self.assertEqual(h.mode,'exhaust')
+
+    def test_30_more_than_eight_points_in_ten_minutes(self):
+        h=self.start(temp=72,rh=54); h.run()
+        h.put('sensor.den_fan_humidity_min_10m',54)
+        h.sensor('humidity',62); h.run(); self.assertEqual(h.mode,'cool')
+        h.sensor('humidity',62.1); h.run(); self.assertEqual(h.mode,'exhaust')
+        # The rapid-rise guard also prevents an immediate restart after recovery.
+        h.sensor('temperature',77); h.advance(601); h.run(); self.assertEqual(h.mode,'exhaust')
+        h.put('sensor.den_fan_humidity_min_10m',62.1); h.run(); self.assertEqual(h.mode,'cool')
+
+    def test_31_heat_overrides_rapid_rise_and_missing_humidity(self):
+        h=self.start(temp=79,rh=75); h.put('sensor.den_fan_humidity_min_10m',50); h.run()
+        self.assertEqual(h.mode,'cool')
+        h.sensor('temperature',76); h.sensor('humidity','unavailable'); h.advance(1801); h.run()
+        self.assertEqual(h.mode,'cool'); self.assertIn('heat priority',h.states('input_text.den_fan_reason'))
+
+    def test_32_drying_can_take_an_hour_without_forced_cooling(self):
+        h=self.start(temp=72,rh=57); h.run(); h.sensor('humidity',65); h.run()
+        for rh in [64,63,62,61,60,59]:
+            h.sensor('humidity',rh); h.advance(600); h.run(); self.assertEqual(h.mode,'exhaust')
+        h.sensor('humidity',58); h.run(); self.assertEqual(h.mode,'cool')
+
+    def test_33_minimum_recovery_does_not_block_heat_override(self):
+        h=self.start(temp=72,rh=57); h.run(); h.sensor('humidity',65); h.run()
+        h.sensor('humidity',57); h.advance(60); h.run(); self.assertEqual(h.mode,'exhaust')
+        h.sensor('temperature',78); h.run(); self.assertEqual(h.mode,'cool')
+
+    def test_34_interrupted_command_status_and_explicit_recovery(self):
+        h=self.start(temp=79,rh=60); h.run(event='synchronize',target_function='exhaust',target_speed='high')
+        h.helper('input_boolean','command_fault','on')
+        h.helper('input_text','error','Command in progress; if interrupted, confirm the fan setting before retrying.')
+        status=h.states['sensor.den_fan_control_status']
+        self.assertIn('paused',status.state); self.assertIn('interrupted',status.attributes['error'])
+        h.run(event='resume_auto'); self.assertEqual(h.mode,'cool'); self.assertEqual(h.error,'')
+
+    def test_35_manual_hold_still_overrides_heat_priority(self):
+        h=self.start(temp=80,rh=75); h.run(event='manual',target_function='circulate',target_speed='low')
+        h.advance(3600); h.run(); self.assertEqual((h.mode,h.speed),('circulate','low'))
+        h.advance(3601); h.run(); self.assertEqual((h.mode,h.speed),('cool','high'))
+
+    def test_36_wet_heat_exit_recovery_and_dry_heat_exit_continuation(self):
+        h=self.start(temp=79,rh=55); h.run(); h.sensor('temperature',75); h.sensor('humidity',64); h.run()
+        self.assertEqual(h.mode,'cool'); self.assertEqual(h.states('input_select.den_fan_cycle'),'cooling')
+        h.sensor('humidity',65); h.run(); self.assertEqual(h.mode,'exhaust')
+
+    def test_37_statistics_window_matches_guard(self):
+        s=build.build()['sensor'][0]
+        self.assertEqual(s['state_characteristic'],'value_min')
+        self.assertEqual(s['max_age'],{'minutes':10})
+        self.assertEqual(s['entity_id'],'sensor.den_fan_humidity_sample')
+        h=self.start(); h.advance(60)
+        sample=h.states['sensor.den_fan_humidity_sample']
+        self.assertEqual(float(sample.state),45)
+        self.assertEqual(sample.attributes['sampled_at'],h.now.isoformat())
 
 if __name__=='__main__':
     import json

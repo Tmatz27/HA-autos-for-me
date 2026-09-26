@@ -2,7 +2,7 @@
 
 A Home Assistant dashboard card and two configurable packages for a dual window fan controlled by a Broadlink remote. A smart plug supplies measured power feedback for all nine combinations of Cool, Exhaust and Circulate at Low, Medium and High speed.
 
-Version **1.5.0** replaces the den controller with one serialized decision path and one hardware driver. Den calibration accepts nine measured ranges that may overlap, retains compatible confirmed history, and pauses automatic retries after an unconfirmed command. The bedroom package and its policy remain unchanged from main's 1.4.0 implementation. Public entities and settings are configurable examples.
+Version **1.6.0** adds humidity-aware comfort cooling for the den and an optional shared dehumidifier package. The den targets 68°F with a dynamic drying threshold, a 65% ordinary RH ceiling and sustained heat relief at 78°F until 75°F. The dehumidifier targets 50% at night and 60% by day, with tank warnings. Bedroom control remains unchanged. All public mappings are configurable examples.
 
 ## Card setup
 
@@ -36,15 +36,21 @@ Use Home Assistant 2024.10 or newer for these packages; they use the [modern aut
      packages: !include_dir_named packages
    ```
 
-5. Install `dist/window-fan-card.js` as a JavaScript module dashboard resource, or update the existing HACS custom repository installation. The release includes the same `window-fan-card.js` asset. Keep one resource URL and hard-refresh the dashboard; the browser console should show 1.5.0.
+5. Install `dist/window-fan-card.js` as a JavaScript module dashboard resource, or update the existing HACS custom repository installation. The release includes the same `window-fan-card.js` asset. Keep one resource URL and hard-refresh the dashboard; the browser console should show 1.6.0.
 6. Run Home Assistant's configuration check and restart. Select the fan in the visual card editor, or use the short YAML from `examples/`. Verify that `sensor.bedroom_fan_state`, `sensor.den_fan_state` and the corresponding control-status sensors have the expected IDs; resolve any duplicate entity suffixes consistently.
 7. Observe the first complete control cycle and adjust calibration/timing to the fan and smart plug. Software tests do not replace checking the installation against physical equipment.
 
 The packages and managed card should be upgraded together. The old setup generator has been replaced with an updated [setup guide](https://tmatz27.github.io/HA-autos-for-me/setup.html); generated settings now come from the versioned Python builder.
 
+For a shared dehumidifier, configure `dehumidifier_controller.py` or run `python dehumidifier_controller.py --config PRIVATE.json --output shared_dehumidifier.yaml`. Install that package once and disable any other automation that writes its settings. The 50% night / 60% day schedule follows `sun.sun`, checks every five minutes and reacts to sunrise/sunset. The appliance retains control of its compressor and fan speed. Read the [dehumidifier setup](docs/CONTROL.md#shared-dehumidifier) before enabling it.
+
 ## Example policies
 
-**Den:** automatic control uses High. Start Cool at 78°F for 30 minutes; end early at 74°F. At the deadline, extend cooling while above 74°F and RH is at or below 70%. Extended cooling ends immediately when RH exceeds 70% or temperature reaches 74°F. After cooling, run Exhaust for at least 15 minutes before another automatic burst. Otherwise run Exhaust. A manual selection suspends automatic output for two hours. Outside temperature does not veto cooling.
+**Den:** Automatic speed is High. Ordinary cooling starts at 70°F when humidity is at or below the restart limit: 58% through 72°F, 60% at 74°F, 62% at 76°F, and 65% at 78°F, interpolated between points. Once started, cooling continues toward 68°F until RH reaches 65% or rises by more than eight percentage points from a recorded low within the preceding ten minutes. Drying requires at least ten minutes of Exhaust and continues until the temperature-dependent humidity limit is met. There is no maximum drying time.
+
+At 78°F, heat priority immediately overrides ordinary humidity limits, the rapid-rise guard and the Exhaust recovery timer. Cool/High stays latched until temperature reaches 75°F. At 75°F the ordinary cooling stop conditions apply; if humidity is acceptable, cooling may continue toward 68°F. Thirty-minute deadlines are reassessment points, not forced mode changes. A two-hour manual hold still overrides all automatic output. Ordinary decisions need valid indoor temperature and humidity; heat priority may run without a humidity reading when temperature is valid. Neither outdoor temperature nor outdoor relative humidity blocks cooling. No outdoor measurements are required by this policy.
+
+The ten-minute humidity minimum uses a valid indoor humidity sample refreshed at least once per minute, including unchanged readings. Sensor availability must reflect disconnection; an available but stale source cannot be distinguished from an unchanged measurement. The 65% stop remains active while a new history window warms up. Climate evaluation runs once per minute; no continuous climate polling is used.
 
 **Bedroom (unchanged):** Exhaust at RH ≥65%, Cool at RH ≤62% and temperature >72°F, otherwise hold the running mode, with a 20-minute minimum mode interval. The existing sleep lock holds Cool/High until morning. See [bedroom configuration](docs/CONTROL.md) for its existing schedule and triggers.
 
@@ -63,6 +69,7 @@ Python 3.11+ and Node.js 20+ are sufficient for the software checks:
 python -m pip install -r requirements-test.txt
 python build.py
 python tests/test_control.py
+python tests/test_dehumidifier.py
 node tests/card.test.cjs
 ```
 

@@ -58,6 +58,15 @@ function card() {
   await c._resumeAuto(); assert.equal(c.calls[5][2].event,'resume_auto');
   c._hass.states['sensor.status'].attributes.manual_until_timestamp=Date.now()/1000+1800;
   c._render(); assert.ok(c._root.innerHTML.includes('Resume Auto'));
+  c._hass.states['sensor.status'].attributes.manual_until_timestamp=0;
+  c._hass.states['sensor.status'].attributes.blocked=true;
+  c._render(); assert.ok(c._root.innerHTML.includes('Auto paused'));
+  assert.ok(c._root.innerHTML.includes('Resume Auto'));
+  c._hass.states['sensor.status'].attributes.command_active=true;
+  c._render(); assert.ok(c._root.innerHTML.includes('Applying setting'));
+  assert.ok(!c._root.innerHTML.includes('Auto paused'));
+  delete c._hass.states['sensor.status'].attributes.command_active;
+  delete c._hass.states['sensor.status'].attributes.blocked;
   for(const mode of ['cool','exhaust','circulate']) assert.ok(c._root.innerHTML.includes('data-action="mode" data-value="'+mode+'"'));
   for(const speed of ['low','med','high']) assert.ok(c._root.innerHTML.includes('data-action="speed" data-value="'+speed+'"'));
   delete c._hass.states['sensor.bedroom_fan_state'].attributes.manual_control;
