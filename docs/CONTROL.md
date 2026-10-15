@@ -1,136 +1,52 @@
-# Configuration and behavior
+# Controller reference
 
-All values below are configurable example settings. Temperatures are Fahrenheit; room sensors reporting Celsius are converted automatically. The schedule follows Home Assistant's configured local time.
+## One writer and persistent history
 
-## Den controller in 1.6.0
+`script.den_fan_set_state` admits requests and reserves manual hold immediately. It performs no hardware operations. It synchronously calls `script.den_fan_executor`, a queued script that exclusively sends fan IR and changes the plug. `script.den_fan_confirm_state` is a convenience wrapper that also enters the same queue. One automation observes sensors and schedules climate evaluation. Do not call the executor directly; use the request service or card.
 
-The den has one serialized controller (`script.den_fan_set_state`) and one hardware writer (`script.den_fan_apply_state`). Card requests, minute checks and settled observations all use this path. Routine climate decisions run once per minute. Observation triggers recognize changes but do not run a second climate policy.
+The executor recomputes Auto after entering the queue. It checks for a newly reserved manual hold before each automatic toggle, and yields between presses without losing completed history. Manual requests wait for the current bounded command/recovery boundary; no requests interleave plug/IR sequences. Repeating an already-satisfied target sends no further toggles. Requests rejected because the finite queue is full are logged by Home Assistant; the package does not automatically replay them.
 
-Automatic speed is High. Ordinary cooling starts at 70°F when humidity is at or below the restart limit: 58% through 72°F, 60% at 74°F, 62% at 76°F, and 65% at 78°F, interpolated between points. Once started, cooling continues toward 68°F until RH reaches 65% or rises by more than eight percentage points from a recorded low within the preceding ten minutes. Drying requires at least ten minutes of Exhaust and continues until the temperature-dependent humidity limit is met. There is no maximum drying time.
+`input_select.den_fan_confirmed_state` retains its v1.6 ID but stores the expected state. `input_select.den_fan_confidence` is established (user-confirmed or deterministic reset), inferred (service returned or uninterrupted restart restored history), or uncertain (interrupted command, stopped fan or contradiction). `input_boolean.den_fan_running` is a belief, not a hardware sensor. History survives uncertainty instead of being erased. Initial unknown state requires explicit confirmation or recovery. Restart without an incomplete command retains history at inferred confidence and preserves manual/policy deadlines. Offline physical changes with overlapping wattage are undetectable; confirm/recover when the physical remote was used while Home Assistant was down.
 
-At 78°F, heat priority immediately overrides ordinary humidity limits, the rapid-rise guard and the Exhaust recovery timer. Cool/High stays latched until temperature reaches 75°F. At 75°F the ordinary cooling stop conditions apply; if humidity is acceptable, cooling may continue toward 68°F. Thirty-minute deadlines are reassessment points, not forced mode changes. A two-hour manual hold still overrides all automatic output. Ordinary decisions need valid indoor temperature and humidity; heat priority may run without a humidity reading when temperature is valid. Neither outdoor temperature nor outdoor relative humidity blocks cooling. No outdoor measurements are required by this policy.
+An intent marker and last-step message are stored before side effects. A service exception or script cancellation leaves the marker set. The card derives active/busy from the real executor entity, not that marker: it reports interrupted/failed once the executor stops. The next request converts the marker to uncertain/fault and sends no further toggles without reference recovery. Consult the executor trace for the underlying HA exception.
 
-The ten-minute humidity minimum uses a valid indoor humidity sample refreshed at least once per minute, including unchanged readings. Sensor availability must reflect disconnection; an available but stale source cannot be distinguished from an unchanged measurement. The 65% stop remains active while a new history window warms up. Climate evaluation runs once per minute; no continuous climate polling is used.
+## Supporting wattage
 
-Manual card selections preserve the other axis and suspend automatic output for 120 minutes. New selections restart that deadline; normal checks and HA restarts do not. Resume Auto ends it early. A uniquely detected physical-remote change also starts a hold; overlapping readings cannot always reveal an external change.
+`last_reported` is polled during bounded command windows, including unchanged reports. Fresh compatible bands corroborate history; overlap does not choose a different state or fault. No fresh report yields inferred delivery, with explicit stale/unavailable evidence. A fresh contradiction after the feedback timeout stops remaining presses and requires reference recovery. An inferred starting state with fresh conflicting evidence is blocked before toggles. Explicit physical confirmation or a deterministic reset outweighs a conflicting baseline measurement, but contradictory feedback after another press still stops the sequence. Physical confirmation accepts exactly the selected axes and warns about mismatching wattage. No automatic physical-remote takeover is inferred from watts.
 
-Configure mappings in `build.py` and den settings/ranges in `den_controller.py`, then run `python build.py`. Alternatively run `python den_controller.py --config PRIVATE.json --output window_fan_den.yaml`; keep private configuration out of GitHub. All nine `ranges` entries must be supplied when overriding ranges. The public values are examples for one fan, not universal specifications.
+Unchanged watts do not prove receipt; a missed press that stays in overlapping bands cannot be detected with this hardware. The executor limits each request to at most two mode and two speed presses. It does not retransmit a toggle on feedback failure. Recovery sends the startup command exactly once after proved power loss; a failed startup must be inspected before another manual recovery. Optional Auto recovery has one persistent attempt and never resets solely because compatible wattage overlaps.
 
-| Setting | Example inclusive watts |
+`off_seconds` is the required discharge interval. The fresh OFF sample may arrive during that interval; change-only meters do not need to emit a second identical zero reading afterward. Fresh startup evidence must arrive after the startup command. A disconnected source that falsely re-reports an old value cannot be distinguished from a measurement; configure availability in the integration and test its cadence.
+
+## Private configuration
+
+Private JSON keys (public values in `DEFAULTS` are examples):
+
+| Key | Meaning |
 |---|---|
-| Cool Low / Medium / High | 46–47 / 48–50 / 50–53 |
-| Exhaust Low / Medium / High | 32–33 / 34–35 / 35–38 |
-| Circulate Low / Medium / High | 39–40 / 42–43 / 44–46 |
+| `power`, `plug` | Watt sensor and electricity-cutting switch |
+| `remote`, `device` | Remote entity and exact learned device group |
+| `power_on_command`, `power_off_command` | Exact learned power identifiers; a verified toggle can be both |
+| `mode_command`, `speed_command` | Exact learned cyclic commands |
+| `temperature`, `humidity` | Actual indoor climate sensor entities; °C/°F normalization is unchanged |
+| `manual_minutes` | Hold duration, default 120, 1–1440 minutes |
+| `off_seconds`, `plug_delay`, `startup_delay` | Discharge time, wait after plug restoration, wait after startup IR |
+| `command_delay` | Minimum time after each mode/speed press |
+| `feedback_timeout` | Additional bounded wait for suitable evidence, default 30 seconds |
+| `power_stale_seconds` | Evidence age cutoff, default 120 seconds |
+| `off_below` | Stopped/running wattage separator; confirm against real hardware |
+| `ranges` | All nine measured `[lower, upper]` ranges; overlap is valid |
+| `range_tolerance` | Band margin, default 0.5 W |
+| `auto_recovery` | Boolean; default false, one persisted attempt if enabled |
 
-`range_tolerance` defaults to ±0.5 W for rounded measurements. It expands each range and can increase overlap; it never resolves overlap by choosing the nearest label. Compatible confirmed history is retained. Without that history, overlapping or out-of-range readings remain Unknown. The editor shows all nine ranges. **Confirm fan setting** records a setting verified on the appliance, checks that its reading is compatible, sends no remote commands, and starts a manual hold.
+No climate thresholds/timers may be changed by this update. They remain the v1.6 values in source. Configuration is emitted throughout templates, statistics sampling, dashboard links, trigger IDs and action targets. Edit private JSON and regenerate; do not hand-replace a few occurrences in YAML.
 
-After each independent toggle, a new live power update must fit the expected range, exclude the previous range, and settle for eight seconds; timeout is 60 seconds. Failed or interrupted commands latch a fault: automatic checks cannot retry repeatedly. A deliberate card request, Resume Auto, physical confirmation or a confirmed real startup can recover when a usable state is available. Deliberate retries are not permission to guess an ambiguous starting state. Unavailable power blocks commands; invalid temperature suspends climate output; missing humidity suspends ordinary climate decisions, but does not block temperature-confirmed heat priority. Numeric unchanged values do not expire just because the number stays the same. Configure integration availability so disconnected sensors become unavailable.
+## Service requests
 
-The example startup reference is Cool/Low. **Verify this on the actual model before enabling startup recovery.** A power reading below 10 W for 15 seconds marks a real off state, excluding brief transition dips. When subsequent power settles in the startup range, the controller establishes that reference and restores Auto or the unexpired manual target. It never turns the fan or plug off to synchronize. An HA restart alone is not a physical restart: state is reacquired from a distinct reading or physical confirmation. If the plug is off, it can be turned on. If the appliance is off while the plug is on, the optional learned power command must be configured or the fan started physically.
+Call `script.den_fan_set_state` with `event: manual`, `target_function: cool|exhaust|circulate` and/or `target_speed: low|med|high`. An empty axis preserves the known other axis. Unknown state cannot supply a missing axis. Events `resume_auto`, `recover`, and `synchronize` use the same executor. Synchronize requires both axes; recover may specify both or reuse the last requested target (Cool/Low on a fresh installation).
 
-Five-minute min/mean/max history values are aggregated statistics, not extra live feedback channels. Use the live power entity for command confirmation.
+The card uses `script.turn_on` only to admit the request promptly, with `entity_id: script.den_fan_set_state` and `variables` containing these fields. It never directly sends plug or BroadLink commands. A browser transport timeout reports uncertain admission and never automatically retries. Backend errors remain visible through `sensor.den_fan_control_status` even if the dashboard was closed.
 
-### Den migration
+## Shared dehumidifier
 
-Replace the old den package rather than adding a second copy. Disable separately copied den automations. Keep Den Fan Continuous Control disabled while replacing the package, updating the card, checking HA configuration and restarting. Existing disabled automation state may remain disabled after restart. Verify manual commands against physical indicators, then enable this one automation and use Resume Auto. Existing old calibration helpers are no longer read by the den controller. Do not replace an installation's bedroom package for this den update. Failed commands retain traces under both den scripts. The new card reports Auto paused after interruption and exposes Resume Auto even without a manual hold. A retry requires usable measured state; it does not clear uncertainty by guessing.
-
-
-### Shared dehumidifier
-
-Install `packages/shared_dehumidifier.yaml` once. Configure `entity`, `humidity`, `tank`, `sun`, `mode`, `night_target` and `day_target` in `dehumidifier_controller.py`, or supply those keys in a private JSON file to its CLI. Keep private files outside this repository. Set `mode` to the exact humidity-target mode supported by the integration (the example is `Manual`). Verify the integration's `available_modes`, `min_humidity` and `max_humidity` first.
-
-Night (`sun.sun = below_horizon`) targets 50%; day (`above_horizon`) targets 60%. Five-minute checks reconcile settings; sun transitions and a tank state stable for 30 seconds trigger earlier checks. Commands are sent only when mode, humidity target or power differ. It leaves the fan-speed control alone and lets the appliance's humidistat cycle its compressor. Disabling the automation stops reconciliation but does not turn the appliance off.
-
-A persistent HA notification appears at 75% tank level, escalates at 100%, and clears below 75% after emptying. A restored alert level prevents repeated notifications every five minutes. At full tank, no device commands are sent; native tank protection remains active. Invalid/unavailable tank readings also pause device commands. Unknown sun state retains existing settings. An unavailable device is retried on a later check. This example assumes a manually emptied tank; verify the behavior before using it with an automatic drain/pump.
-
-The dehumidifier has one owner independent of both fan controllers. It uses its own humidity sensor for status, never its temperature. An open airflow path affects how much it can dry adjacent rooms; a closed door can isolate a room. Target settings cannot guarantee room humidity or temperature.
-
-Official action references: [humidifier](https://www.home-assistant.io/integrations/humidifier/) and [statistics](https://www.home-assistant.io/integrations/statistics/).
-
-
-## Bedroom climate policy
-
-The unchanged bedroom package runs these three rules, in this order. `cfg` holds the three
-numbers; there is nothing else to tune.
-
-| Order | Condition | Action |
-|---|---|---|
-| 1 | Room RH at or above `exhaust_above` (65%) | **Exhaust** - get the moisture out, whatever the temperature |
-| 2 | Room RH at or below `cool_below` (62%) **and** temp above `cool_above` (72F) | **Cool** - bring the temperature down |
-| 3 | Anything else | **Hold** whatever is already running |
-
-Rule 3 is what keeps the fan settled, and it is the reason for the gap between
-62% and 65%. Cool draws outdoor air and raises room humidity by a couple of
-points on its own, so with one threshold Cool pushed humidity over the line,
-Exhaust pulled it back under, and each triggered the other every evaluation.
-Inside the band nothing is requested, and the mode defaults to what is already
-running rather than to a fixed mode.
-
-A mode change is also held for at least `minimum_mode_seconds` (20 minutes).
-The fan beeps on every press. Manual selections, sleep transitions, and
-correcting a fan that is not where it was last told to be are not delayed.
-
-Invalid or stale room readings fall back to Exhaust.
-
-## Bedroom sleep lock
-
-The bedroom adds this override. The den uses its separate controller described above.
-
-| Condition | Action |
-|---|---|
-| TV goes from active to off/standby/unavailable during 22:00-06:00 | Cool/High until morning |
-| Manual Cool selected during the window | Cool/High until morning |
-| The window opens at 22:00 with the TV already off | Cool/High until morning |
-| Morning, or the window closes | Release; the three rules resume |
-
-While the lock is held the fan does not change mode at all, regardless of
-humidity or temperature. That is deliberate: no beeping while asleep.
-
-Outdoor readings are not used for control in either room. Exhaust only dries
-the room when the replacement air is drier, which depends on the airflow path
-through the house rather than on outdoor humidity at the window, so comparing
-the two was a heuristic that mostly produced mode changes. Room limits are
-control targets, not guarantees.
-
-## Bedroom and standalone calibration
-
-Managed mode uses **one decoder**, shared between the card and controller. It classifies ascending power bands in this order:
-
-`Off → Exhaust Low → Exhaust Medium → Exhaust High → Circulate Low → Circulate Medium → Circulate High → Cool Low → Cool Medium → Cool High`
-
-The sample boundary values are `10, 32, 34.5, 37, 41, 44, 46, 48, 50` watts. Each boundary is exclusive for the lower band. Cool High is the final open-ended band. Measure each mode/speed and confirm that the ordering and separation fit the fan. This decoder is unsuitable if distinct states overlap in watts or use a different ordering; adjust the decoder before using such hardware.
-
-First run seeds `input_number.<room>_fan_watts_*` helpers from `BANDS` in the builder; subsequent restarts restore the edited helper values. Open **Calibration** in the card editor to edit the helpers. Temporarily disable the fan's automations while measuring or adjusting multiple boundaries, then re-enable them. Non-numeric or non-increasing boundaries produce Unknown and block remote presses.
-
-The standalone card instead accepts nine measured wattages in its editor, a maximum deviation, and an Off threshold. It does not estimate Circulate from Cool/Exhaust. Supply all nine measurements before using it. Standalone remote actions should not run alongside a managed package; use the supplied managed card configurations for these packages.
-
-## Bedroom feedback and timing
-
-The motor cycles must be independent:
-
-- Mode: Cool → Exhaust → Circulate → Cool.
-- Speed: Low → Medium → High → Low.
-
-The controller reads observed state before each press and waits for a fresh report confirming the expected result. Defaults allow 60 seconds for feedback and two seconds of settling. Missing or unconfirmed feedback stops further presses and displays the expected state, observed state and watts. Automatic retries wait five minutes; explicit card and bedtime requests can retry immediately. Physical-remote bedtime detection resumes after errors, with a short guard against delayed reports from the controller's own commands.
-
-Available numeric power readings do not expire solely because their value has not been reported again (`power_max_age: 0`). This supports change-only reporting plugs. Set a positive `power_max_age` if the integration has a known regular reporting interval; an unavailable, unknown or invalid power value always blocks commands. An integration that leaves a disconnected sensor available can still expose an old starting value, so configure that integration's availability when supported. Every toggle must produce a new power-state update matching its expected result before another toggle is sent. Indoor readings expire after 15 minutes, using the most recent report. Routine evaluation occurs once per minute and on Home Assistant startup. Climate and power sensor reports do not start additional routine runs. Bedtime events and card commands remain event-driven. Brief feedback polling occurs only while a command sequence is active. Threshold decisions can therefore take up to one minute to respond. There is a 20-minute minimum interval between mode changes. Only a manual request, a sleep-lock transition, or correcting a fan that is not where it was last told to be bypasses it.
-
-The optional learned `power_command` starts blank. An off smart plug can be turned on, but if the plug is already on and the fan itself is off, configure that learned command or start the fan physically. No boot mode is assumed. The package never sends a fan-off request.
-
-Climate/timing settings live in `cfg` at the start of each generated controller. Configure source mappings in `build.py` and regenerate to keep all embedded references consistent. Existing helper values override the initial calibration seeds; editing `BANDS` alone does not change a previously initialized installation.
-
-
-## Bedtime after installing or restarting
-
-Sleep starts from a TV-off transition, an explicit Cool selection inside the bedtime window, or the bedtime check finding the TV already off when the window opens. An active saved Sleep lock survives restart, but an event that occurred before the new automation was installed cannot be replayed. Select Cool on the card to start Sleep in that case.
-
-The editor shows Off plus all nine running ranges and their current wattages. Cool/High is the final open-ended range: its lower boundary is the Cool/Med upper boundary (50 W in the examples). Selecting Cool/High opens that shared boundary helper. This preserves existing calibration without introducing another independent cutoff.
-
-
-## Bedroom manual card controls
-
-All three modes and speeds are selectable. A mode button preserves the observed speed, and a speed button preserves the observed mode. The explicit selection takes priority over climate decisions for `manual_minutes` (30 by default). Each new selection starts a new deadline; routine evaluation and restart do not extend it. The card shows Manual and the remaining minutes, with **Resume Auto** to end the hold immediately. When the deadline expires, the next minute check resumes the current climate policy at High speed. Power confirmation and serialization still apply to every command.
-
-Bedroom Cool during the bedtime window starts the existing sleep lock and chooses High when the mode button alone is used. After its manual hold expires, Auto continues Cool/High until morning. Explicit later speed changes can hold another speed temporarily. A new bedtime TV/observed-Cool event takes over an existing manual hold; the end of an active sleep lock also clears a remaining hold so the three rules resume on time.
-
-The card and packages must be upgraded together. The new controller advertises manual-control support; older packages produce a clear upgrade message rather than silently discarding a click. The fan is never turned off by these controls.
+`dehumidifier_controller.py` and `packages/shared_dehumidifier.yaml` are unchanged. The independent owner uses 50% at night and 60% by day according to `sun.sun`, checks every five minutes and on relevant changes, warns once at 75% tank level and blocks restart commands when full/invalid. Native hardware retains compressor/fan protection. Configure its humidity, tank, device, mode and supported target range using its existing private generator. No fan request writes dehumidifier settings.

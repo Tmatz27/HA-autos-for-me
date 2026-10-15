@@ -57,9 +57,9 @@ class Harness:
         self.script=self.package['script'][self.prefix+'_set_state']
         self.cfg=self.script['sequence'][0]['variables']['cfg']
         self.now=dt(when); self.states=States(); self.mode=mode; self.speed=speed
-        self.calls=[]; self.pending=[]; self.report_delay=2; self.miss=False; self.reporting=True; self.boot=True
+        self.calls=[]; self.pending=[]; self.report_delay=2; self.miss=False; self.reporting=True; self.heartbeat=True; self.boot=True; self.powered=True; self.running=True; self.service_error=False; self.after_action=None; self.inflight=set(); self.queue=[]
         self.motor_watts={key:sum(bounds)/2 for key,bounds in build.RANGES.items()}; self.motor_watts.update(cool_low=47, exhaust_med=34)
-        self.env=NativeEnvironment(undefined=StrictUndefined)
+        self.templates={}; self.env=NativeEnvironment(undefined=StrictUndefined)
         self.env.globals.update(states=self.states,is_number=number,now=lambda:self.now,
           state_attr=lambda e,a:self.states[e].attributes.get(a),is_state=lambda e,s:self.states(e)==s,
           as_timestamp=ts,timedelta=timedelta,today_at=lambda t:datetime.combine(self.now.date(),datetime.strptime(t,'%H:%M:%S').time(),TZ),
@@ -82,7 +82,9 @@ class Harness:
         ctx=ctx or {}
         if isinstance(v,dict): return {k:self.render(x,ctx) for k,x in v.items()}
         if isinstance(v,list): return [self.render(x,ctx) for x in v]
-        if isinstance(v,str) and ('{{' in v or '{%' in v): return native(self.env.from_string(v).render(**ctx))
+        if isinstance(v,str) and ('{{' in v or '{%' in v):
+            if v not in self.templates: self.templates[v]=self.env.from_string(v)
+            return native(self.templates[v].render(**ctx))
         return v
     def refresh(self):
         for sensor in self.package['template'][0]['sensor']:
@@ -97,8 +99,9 @@ class Harness:
         self.now=target
         due=[x for x in self.pending if x[0]<=target]
         self.pending=[x for x in self.pending if x[0]>target]
-        for _,value in due: self.put(self.cfg['power'],value)
-        if self.reporting:
+        for _,value in due:
+            if self.reporting: self.put(self.cfg['power'],value)
+        if self.reporting and self.heartbeat:
             for key in ['power','temperature','humidity']:
                 self.states[self.cfg[key]].last_reported=self.now
         self.refresh()
@@ -135,22 +138,35 @@ class Harness:
                 elif name=='input_datetime.set_datetime':
                     t=float(data['timestamp']); self.put(entity,datetime.fromtimestamp(t,TZ).strftime('%Y-%m-%d %H:%M:%S'),{'timestamp':t})
                 elif name=='remote.send_command':
+                    if self.service_error: raise RuntimeError('BroadLink service unavailable')
                     if not self.miss:
                         if data['command']==self.cfg['mode_command']: self.mode=build.MODES[(build.MODES.index(self.mode)+1)%3]
-                        elif data['command']=='speed_toggle': self.speed=build.SPEEDS[(build.SPEEDS.index(self.speed)+1)%3]
-                        else: raise AssertionError('Unexpected command')
-                        self.pending.append((self.now+timedelta(seconds=self.report_delay),self.motor_watts[self.mode+'_'+self.speed]))
+                        elif data['command']==self.cfg['speed_command']: self.speed=build.SPEEDS[(build.SPEEDS.index(self.speed)+1)%3]
+                        elif data['command']==self.cfg['power_on_command']:
+                            if self.powered and self.boot: self.mode,self.speed='cool','low'; self.running=True
+                        else: raise AssertionError('Unexpected command: '+data['command'])
+                        self.pending.append((self.now+timedelta(seconds=self.report_delay),self.motor_watts[self.mode+'_'+self.speed] if self.running else 0))
                 elif name=='switch.turn_on':
                     self.put(entity,'on')
-                    if self.boot:
-                        self.mode,self.speed='cool','low'; self.pending.append((self.now+timedelta(seconds=2),self.motor_watts['cool_low']))
+                    self.powered=True  # Restoring the plug does NOT start the motor.
+                elif name=='switch.turn_off':
+                    self.put(entity,'off'); self.powered=False; self.running=False
+                    self.pending=[]; self.pending.append((self.now+timedelta(seconds=2),0))
                 elif name.startswith('script.'):
                     nested=self.package['script'][name.split('.')[1]]
-                    self.put(name,'on')
+                    if name in self.inflight:
+                        assert nested['mode']=='queued'
+                        self.queue.append((name,data)); continue
+                    self.inflight.add(name); self.put(name,'on')
                     try: self.execute(nested['sequence'],dict(data))
                     except Halt as result:
                         if result.error: raise
-                    finally: self.put(name,'off')
+                    except RuntimeError:
+                        if not item.get('continue_on_error'): raise
+                    finally: self.inflight.remove(name); self.put(name,'off')
+                    while self.queue and self.queue[0][0] not in self.inflight:
+                        queued_name,queued_data=self.queue.pop(0)
+                        self.execute([{'action':queued_name,'data':queued_data}],{})
                 elif name.startswith('persistent_notification.'): pass
                 elif name.startswith('humidifier.'):
                     attrs=dict(self.states[entity].attributes)
@@ -160,6 +176,7 @@ class Harness:
                     self.put(entity,'on' if name=='humidifier.turn_on' else self.states(entity),attrs)
                 else: raise AssertionError('Unexpected action: '+str(name))
                 self.refresh()
+                if self.after_action: self.after_action(name,entity,data)
             else: raise AssertionError('Unhandled script action: '+str(item))
     def run(self,**fields):
         self.put('script.'+self.prefix+'_set_state','on')
@@ -173,153 +190,205 @@ class Harness:
     @property
     def error(self): return self.states('input_text.'+self.prefix+'_error')
 
+
 class Tests(unittest.TestCase):
     def start(self,mode='exhaust',speed='high',temp=69,rh=45):
         h=Harness('den',mode=mode,speed=speed)
         h.sensor('temperature',temp); h.sensor('humidity',rh)
-        return h
-    def test_01_measured_exhaust_high_never_causes_a_toggle(self):
-        for watts in [36,37,38,38.4]:
-            h=self.start(); h.sensor('power',watts); h.advance(16); h.run()
-            self.assertEqual(h.states('sensor.den_fan_state'),'exhaust_high')
-            self.assertEqual(len(h.remote_calls),0)
-    def test_02_manual_cool_holds_two_hours_at_75_and_78(self):
-        for temp in [75,78]:
-            h=self.start(temp=temp); h.run(event='manual',target_function='cool')
-            self.assertEqual((h.mode,h.speed),('cool','high')); self.assertEqual(h.error,'')
-            count=len(h.remote_calls)
-            for _ in range(6): h.advance(60); h.run()
-            self.assertEqual(len(h.remote_calls),count)
-            h.advance(3600); h.run(); self.assertEqual(h.mode,'cool')
-    def test_03_manual_expiry_rechecks_climate_at_high(self):
-        h=self.start(); h.run(event='manual',target_function='circulate',target_speed='low')
-        h.advance(7201); h.run()
-        self.assertEqual((h.mode,h.speed),('exhaust','high')); self.assertEqual(h.error,'')
-    def test_04_all_nine_manual_targets(self):
-        for setting in build.STATES:
-            with self.subTest(setting=setting):
-                h=self.start(); mode,speed=setting.split('_'); h.run(event='manual',target_function=mode,target_speed=speed)
-                self.assertEqual((h.mode,h.speed),(mode,speed)); self.assertEqual(h.error,'')
-    def test_05_overlap_retains_confirmed_history_without_toggles(self):
-        for setting,watts in [('exhaust_high',35),('cool_high',50),('circulate_high',46),('cool_low',46)]:
-            h=self.start(*setting.split('_')); h.run(event='manual',target_function=h.mode,target_speed=h.speed)
-            h.sensor('power',watts); h.advance(60); h.run()
-            self.assertEqual(h.states('sensor.den_fan_state'),setting); self.assertEqual(len(h.remote_calls),0)
-    def test_06_overlap_without_history_is_unknown(self):
-        for watts in [35,46,50]:
-            h=self.start(); h.sensor('power',watts); h.advance(16); h.run(event='startup')
-            self.assertEqual(h.states('sensor.den_fan_state'),'unknown'); self.assertEqual(len(h.remote_calls),0)
-    def test_07_missed_press_fault_stops_all_automatic_retries(self):
-        h=self.start(); h.miss=True; h.run(event='manual',target_function='cool')
-        self.assertEqual(len(h.remote_calls),1); self.assertTrue(h.error)
-        for _ in range(6): h.advance(360); h.run()
-        self.assertEqual(len(h.remote_calls),1)
-        self.assertEqual(h.states('input_boolean.den_fan_command_fault'),'on')
-    def test_08_ambiguous_post_press_cannot_confirm_high(self):
-        h=self.start('cool','med'); h.motor_watts['cool_high']=50
-        h.run(event='manual',target_speed='high')
-        self.assertTrue(h.error); self.assertEqual(len(h.remote_calls),1)
-        self.assertEqual(h.states('input_boolean.den_fan_command_fault'),'on')
-    def test_09_confirm_physical_setting_sends_no_commands(self):
-        h=self.start('cool','high'); h.sensor('power',50)
-        h.run(event='synchronize',target_function='cool',target_speed='high')
-        self.assertEqual(h.states('sensor.den_fan_state'),'cool_high'); self.assertEqual(len(h.remote_calls),0)
-        self.assertEqual(h.states('input_boolean.den_fan_command_fault'),'off')
-    def test_10_external_remote_change_starts_manual_hold(self):
-        h=self.start(); h.run(); h.advance(60)
-        h.mode,h.speed='cool','low'; h.sensor('power',47); h.advance(16); h.run()
-        self.assertEqual(len(h.remote_calls),0)
-        self.assertGreater(h.states['input_datetime.den_fan_manual_until'].attributes['timestamp'],h.now.timestamp()+7100)
-        h.advance(300); h.run(); self.assertEqual(h.mode,'cool')
-    def test_11_real_off_on_bootstrap_accepts_overlap_at_46(self):
-        h=self.start(); h.sensor('power',0); h.put(h.cfg['plug'],'off'); h.advance(16); h.motor_watts['cool_low']=46
-        h.run(); self.assertEqual(h.states('input_boolean.den_fan_boot_pending'),'on')
-        h.advance(16); h.advance(16); h.run(event='observe')
-        self.assertEqual(h.states('sensor.den_fan_state'),'exhaust_high')
-        self.assertEqual(len(h.remote_calls),3)
-        self.assertFalse(any(name=='switch.turn_off' for name,_,_ in h.calls))
-    def test_12_brief_power_dip_does_not_reset_state(self):
-        h=self.start(); h.run(); h.sensor('power',0); h.advance(2); h.run(event='observe')
-        self.assertEqual(h.states('input_boolean.den_fan_boot_pending'),'off')
-        h.sensor('power',37); h.advance(16); h.run(); self.assertEqual(len(h.remote_calls),0)
-    def test_13_den_78_starts_cooling_even_with_old_unchanged_climate(self):
-        h=self.start(temp=78,rh=52); h.reporting=False; h.advance(3600); h.run()
-        self.assertEqual((h.mode,h.speed),('cool','high')); self.assertEqual(h.error,'')
-    def test_14_heat_priority_ignores_humidity_until_75(self):
-        h=self.start(temp=78,rh=52); h.run(); self.assertEqual(h.states('input_select.den_fan_cycle'),'heat_relief')
-        h.sensor('temperature',76); h.advance(1801); h.run()
-        self.assertEqual(h.states('input_select.den_fan_cycle'),'heat_relief')
-        h.sensor('humidity',71); h.run(); self.assertEqual(h.mode,'cool')
-        h.sensor('temperature',75); h.run(); self.assertEqual(h.mode,'exhaust')
-        self.assertEqual(h.states('input_select.den_fan_cycle'),'recovery')
-        h.sensor('temperature',79); h.advance(60); h.run(); self.assertEqual(h.mode,'cool')
-    def test_15_heat_relief_ends_at_75_when_humid(self):
-        h=self.start(temp=78,rh=72); h.run(); h.sensor('temperature',75); h.run()
-        self.assertEqual(h.mode,'exhaust'); self.assertEqual(h.states('input_select.den_fan_cycle'),'recovery')
-    def test_16_unavailable_climate_does_not_create_fictitious_dry_reading(self):
-        h=self.start('cool','high'); h.sensor('humidity','unavailable'); h.run()
-        self.assertEqual(len(h.remote_calls),0); self.assertIn('Climate unavailable',h.states('input_text.den_fan_reason'))
-    def test_17_resume_auto_ends_hold(self):
-        h=self.start(); h.run(event='manual',target_function='cool'); h.run(event='resume_auto')
-        self.assertEqual(h.mode,'exhaust'); self.assertEqual(h.error,'')
-    def test_18_only_driver_sends_remote_commands(self):
-        p=build.build()
-        for key,script in p['script'].items():
-            if key != 'den_fan_apply_state': self.assertNotIn('remote.send_command',json.dumps(script))
-        self.assertNotIn('switch.turn_off',json.dumps(p)); self.assertNotIn('switch.toggle',json.dumps(p))
-    def test_19_every_template_attribute_is_string(self):
-        for sensor in build.build()['template'][0]['sensor']:
-            for value in sensor.get('attributes',{}).values(): self.assertIsInstance(value,str)
-    def test_20_restart_reconciles_expired_cycle(self):
-        h=self.start(temp=79,rh=72); h.run(); h.advance(1801); h.run(event='startup')
-        self.assertEqual(h.states('input_select.den_fan_cycle'),'heat_relief'); self.assertEqual(h.mode,'cool')
-    def test_21_transient_external_change_keeps_reference_for_manual_detection(self):
-        h=self.start(); h.run(); h.advance(30)
-        h.mode,h.speed='cool','high'; h.sensor('power',51); h.run(event='observe')
-        self.assertEqual(h.states('sensor.den_fan_state'),'unknown')
-        h.advance(16); h.run()
-        self.assertEqual(h.states('sensor.den_fan_state'),'cool_high')
-        self.assertGreater(h.states['input_datetime.den_fan_manual_until'].attributes['timestamp'],h.now.timestamp())
-        self.assertEqual(len(h.remote_calls),0)
-    def test_22_service_exception_leaves_persisted_fault(self):
-        h=self.start(); original=h.execute
-        def broken(items,ctx):
-            if any(item.get('action') == 'script.den_fan_apply_state' for item in items):
-                # Inject the exception exactly at the nested script call after the latch was set.
-                for item in items:
-                    if item.get('action') == 'script.den_fan_apply_state': raise RuntimeError('Service unavailable')
-                    original([item],ctx)
-            else: original(items,ctx)
-        h.execute=broken
-        with self.assertRaises(RuntimeError): h.run(event='manual',target_function='cool')
-        self.assertEqual(h.states('input_boolean.den_fan_command_fault'),'on')
-        h.execute=original; h.advance(7201); h.run()
-        self.assertEqual(len(h.remote_calls),0)
-    def test_23_updated_climate_targets_do_not_reset_burst_deadline(self):
-        h=self.start(temp=78,rh=52); h.run()
-        end=h.states['input_datetime.den_fan_cycle_end'].attributes['timestamp']
-        for temp in [79,77,76]:
-            h.sensor('temperature',temp); h.advance(60); h.run()
-            self.assertEqual(h.states['input_datetime.den_fan_cycle_end'].attributes['timestamp'],end)
-    def test_24_single_axis_manual_preserves_other_axis(self):
+        h.run(event='synchronize',target_function=mode,target_speed=speed)
+        h.put('input_datetime.den_fan_manual_until','1970-01-01 00:00:00',{'timestamp':0})
+        h.calls=[]; h.refresh(); return h
+    def test_all_81_cyclic_transitions_preserve_independent_axes(self):
+        for before in build.STATES:
+            for target in build.STATES:
+                with self.subTest(before=before,target=target):
+                    h=self.start(*before.split('_')); m,s=target.split('_')
+                    h.run(event='manual',target_function=m,target_speed=s)
+                    self.assertEqual((h.mode,h.speed),(m,s)); self.assertEqual(h.error,'')
+                    bm,bs=before.split('_')
+                    expected=(build.MODES.index(m)-build.MODES.index(bm))%3+(build.SPEEDS.index(s)-build.SPEEDS.index(bs))%3
+                    self.assertEqual(len(h.remote_calls),expected)
+                    self.assertFalse(any(c[0].startswith('switch.') for c in h.calls))
+    def test_all_nine_reset_targets_and_exact_power_order(self):
+        for target in build.STATES:
+            with self.subTest(target=target):
+                h=self.start('circulate','high'); m,s=target.split('_')
+                h.run(event='recover',target_function=m,target_speed=s)
+                actions=[c[0] for c in h.calls if c[0].startswith(('switch.','remote.'))]
+                self.assertEqual(actions[:3],['switch.turn_off','switch.turn_on','remote.send_command'])
+                self.assertEqual(h.remote_calls[0][2]['command'],h.cfg['power_on_command'])
+                self.assertEqual((h.mode,h.speed),(m,s)); self.assertEqual(h.error,'')
+                self.assertEqual(h.states('input_select.den_fan_recovery'),'complete')
+    def test_cool_high_to_exhaust_medium_is_one_mode_two_speed(self):
+        h=self.start('cool','high'); h.run(event='manual',target_function='exhaust',target_speed='med')
+        self.assertEqual([c[2]['command'] for c in h.remote_calls],[h.cfg['mode_command'],h.cfg['speed_command'],h.cfg['speed_command']])
+    def test_each_single_axis_preserves_the_other(self):
         h=self.start('circulate','med'); h.run(event='manual',target_speed='low')
         self.assertEqual((h.mode,h.speed),('circulate','low'))
         h.run(event='manual',target_function='cool'); self.assertEqual((h.mode,h.speed),('cool','low'))
-    def test_25_power_restore_reapplies_manual_setting_without_extending_hold(self):
-        h=self.start(); h.run(event='manual',target_function='circulate',target_speed='med')
-        end=h.states['input_datetime.den_fan_manual_until'].attributes['timestamp']
-        h.sensor('power',0); h.put(h.cfg['plug'],'off'); h.advance(16); h.run(event='observe')
-        h.advance(16); h.advance(16); h.run(event='observe')
-        self.assertEqual((h.mode,h.speed),('circulate','med')); self.assertEqual(h.error,'')
-        self.assertEqual(h.states['input_datetime.den_fan_manual_until'].attributes['timestamp'],end)
-    def test_26_tolerance_does_not_resolve_overlap_by_guessing(self):
-        h=self.start(); h.sensor('power',35.4); h.advance(16); h.run(event='startup')
-        self.assertEqual(h.states('sensor.den_fan_state'),'unknown'); self.assertEqual(len(h.remote_calls),0)
+    def test_manual_without_climate_and_timer_restarts(self):
+        h=self.start(); h.sensor('temperature','unknown'); h.sensor('humidity','unavailable')
+        started=h.now.timestamp(); h.run(event='manual',target_function='cool')
+        first=h.states['input_datetime.den_fan_manual_until'].attributes['timestamp']
+        self.assertEqual(first-started,7200)
+        h.advance(60); h.run(event='manual',target_speed='med')
+        self.assertGreater(h.states['input_datetime.den_fan_manual_until'].attributes['timestamp'],first)
+        self.assertEqual((h.mode,h.speed),('cool','med'))
+    def test_hold_expiration_and_resume_auto(self):
+        for resume in [False,True]:
+            h=self.start(temp=80,rh=75); h.run(event='manual',target_function='circulate',target_speed='low')
+            count=len(h.remote_calls); h.advance(3600); h.run()
+            self.assertEqual(len(h.remote_calls),count)
+            if resume: h.run(event='resume_auto')
+            else: h.advance(3601); h.run()
+            self.assertEqual((h.mode,h.speed),('cool','high'))
+    def test_ambiguous_50_4_retains_high_and_never_resets(self):
+        h=self.start('cool','high',temp=72,rh=57); h.sensor('power',50.4)
+        for _ in range(4): h.run(); h.advance(60)
+        self.assertEqual(h.states('sensor.den_fan_state'),'cool_high')
+        self.assertEqual(h.error,''); self.assertEqual(h.remote_calls,[])
+        self.assertFalse(any(c[0].startswith('switch.') for c in h.calls))
+        self.assertIn('Overlapping',h.states['sensor.den_fan_control_status'].attributes['evidence'])
+    def test_overlap_after_press_is_inferred_not_independently_confirmed(self):
+        h=self.start('cool','med'); h.motor_watts['cool_high']=50.4
+        h.run(event='manual',target_speed='high')
+        self.assertEqual(h.states('sensor.den_fan_state'),'cool_high')
+        self.assertEqual(h.states('input_select.den_fan_confidence'),'inferred')
+        self.assertEqual(h.error,''); self.assertIn('unproven',h.states('input_text.den_fan_outcome'))
+    def test_restart_restores_hold_history_and_downgrades_confidence(self):
+        h=self.start(); h.run(event='manual',target_function='circulate',target_speed='low')
+        hold=h.states['input_datetime.den_fan_manual_until'].attributes['timestamp']; count=len(h.remote_calls)
+        h.run(event='startup')
+        self.assertEqual(h.states('sensor.den_fan_state'),'circulate_low')
+        self.assertEqual(h.states('input_select.den_fan_confidence'),'inferred')
+        self.assertEqual(h.states['input_datetime.den_fan_manual_until'].attributes['timestamp'],hold)
+        self.assertEqual(len(h.remote_calls),count)
+        for domain in ['input_select','input_boolean','input_datetime']:
+            self.assertTrue(all('initial' not in x for x in h.package[domain].values()))
+    def test_physical_power_loss_preserves_history_blocks_toggles(self):
+        h=self.start(); h.put(h.cfg['plug'],'off'); h.sensor('power',0)
+        h.run(event='power_lost'); h.run(event='manual',target_function='cool')
+        self.assertEqual(h.remote_calls,[])
+        self.assertEqual(h.states('sensor.den_fan_state'),'exhaust_high')
+        self.assertEqual(h.states('input_boolean.den_fan_running'),'off')
+        self.assertEqual(h.states('input_select.den_fan_confidence'),'uncertain')
+    def test_failed_power_on_stops_without_toggles_or_infinite_retries(self):
+        h=self.start(); h.boot=False; h.run(event='recover',target_function='circulate',target_speed='high')
+        self.assertEqual(len(h.remote_calls),1); self.assertIn('Power On',h.error)
+        self.assertEqual(h.states('input_select.den_fan_recovery'),'failed')
+        h.advance(7201)
+        for _ in range(4): h.run(); h.advance(60)
+        self.assertEqual(len(h.remote_calls),1)
+        self.assertEqual(sum(c[0]=='switch.turn_off' for c in h.calls),1)
+    def test_recovery_accepts_change_only_off_and_startup_reports(self):
+        h=self.start(); h.heartbeat=False; h.run(event='recover',target_function='circulate',target_speed='med')
+        self.assertEqual((h.mode,h.speed),('circulate','med'))
+        self.assertEqual(h.states('input_select.den_fan_recovery'),'complete'); self.assertEqual(h.error,'')
+
+    def test_no_running_evidence_from_stale_pre_reset_reading(self):
+        h=self.start(); h.reporting=False; h.run(event='recover')
+        self.assertEqual(h.remote_calls,[]); self.assertIn('stopped-power',h.error)
+    def test_missed_press_blocks_remaining_presses_and_auto_retry(self):
+        h=self.start(); h.miss=True; h.run(event='manual',target_function='cool',target_speed='low')
+        self.assertEqual(len(h.remote_calls),1); self.assertIn('contradicts',h.error)
+        self.assertEqual(h.states('sensor.den_fan_state'),'circulate_high') # first commanded step retained as uncertain history
+        self.assertEqual(h.states('input_select.den_fan_confidence'),'uncertain')
+        h.advance(7201)
+        for _ in range(3): h.run()
+        self.assertEqual(len(h.remote_calls),1)
+    def test_delayed_and_unchanged_fresh_reports(self):
+        h=self.start(); h.report_delay=20; h.run(event='manual',target_function='cool')
+        self.assertEqual(h.mode,'cool'); self.assertEqual(h.error,'')
+        h=self.start('cool','med'); h.motor_watts['cool_med']=50.4; h.motor_watts['cool_high']=50.4
+        h.sensor('power',50.4); h.run(event='manual',target_speed='high')
+        self.assertEqual(h.error,''); self.assertEqual(h.speed,'high')
+    def test_unavailable_or_stale_power_reports_inference_without_erasing_history(self):
+        for value in ['unknown','unavailable',50.4]:
+            h=self.start('cool','high'); h.sensor('power',value); h.reporting=False
+            h.states[h.cfg['power']].last_reported=h.now-timedelta(seconds=300)
+            h.run(event='manual',target_function='circulate',target_speed='low')
+            self.assertEqual((h.mode,h.speed),('circulate','low'))
+            self.assertEqual(h.states('input_select.den_fan_confidence'),'inferred')
+            self.assertEqual(h.error,'')
+            self.assertIn('unavailable or stale',h.states['sensor.den_fan_control_status'].attributes['evidence'])
+    def test_confirm_conflicting_watts_accepts_selected_state_without_commands(self):
+        h=self.start(); h.sensor('power',50.4)
+        h.run(event='synchronize',target_function='circulate',target_speed='med')
+        self.assertEqual(h.states('sensor.den_fan_state'),'circulate_med')
+        self.assertIn('wattage disagrees',h.error); self.assertEqual(h.remote_calls,[])
+        self.assertEqual(h.states('input_select.den_fan_confidence'),'established')
+    def test_user_confirmation_outweighs_conflicting_baseline_wattage(self):
+        h=self.start('exhaust','high'); h.sensor('power',49)
         h.run(event='synchronize',target_function='exhaust',target_speed='high')
-        for watts in [35,35.4,37,38.4]:
-            h.sensor('power',watts); h.advance(60); h.run()
-            self.assertEqual(h.states('sensor.den_fan_state'),'exhaust_high')
-        self.assertEqual(len(h.remote_calls),0)
+        self.assertIn('wattage disagrees',h.error)
+        h.run(event='manual',target_function='circulate')
+        self.assertEqual(h.mode,'circulate'); self.assertEqual(h.error,'')
+
+    def test_unknown_state_requires_reference_and_no_blind_toggles(self):
+        h=Harness('den'); h.run(event='manual',target_function='cool')
+        self.assertEqual(h.remote_calls,[]); self.assertIn('Unknown starting',h.error)
+        h.run(event='manual',target_function='cool',target_speed='high')
+        self.assertEqual(h.remote_calls,[]); self.assertIn('State uncertain',h.error)
+    def test_duplicate_request_executes_no_duplicate_toggles(self):
+        h=self.start(); h.run(event='manual',target_function='cool',target_speed='low')
+        count=len(h.remote_calls); h.run(event='manual',target_function='cool',target_speed='low')
+        self.assertEqual(len(h.remote_calls),count)
+    def test_manual_arrives_during_auto_and_uses_shared_queue(self):
+        h=self.start(temp=78,rh=70); fired=False
+        def during(name,entity,data):
+            nonlocal fired
+            if name=='remote.send_command' and not fired:
+                fired=True; h.run(event='manual',target_function='circulate',target_speed='low')
+        h.after_action=during; h.run()
+        self.assertTrue(fired); self.assertEqual((h.mode,h.speed),('circulate','low'))
+        self.assertEqual(h.queue,[]); self.assertEqual(h.error,'')
+        # Only the first auto mode press was allowed; manual used its result.
+        self.assertEqual(len(h.remote_calls),2)
+    def test_manual_arrives_during_recovery_waits_for_completed_reference(self):
+        h=self.start(); fired=False
+        def during(name,entity,data):
+            nonlocal fired
+            if name=='switch.turn_off' and not fired:
+                fired=True; h.run(event='manual',target_function='circulate',target_speed='med')
+        h.after_action=during; h.run(event='recover',target_function='cool',target_speed='low')
+        self.assertEqual((h.mode,h.speed),('circulate','med'))
+        self.assertEqual(sum(c[0]=='switch.turn_off' for c in h.calls),1)
+    def test_service_error_is_persisted_and_restart_cannot_resume_blindly(self):
+        h=self.start(); h.service_error=True; h.run(event='manual',target_function='cool')
+        self.assertEqual(h.states('input_boolean.den_fan_command_in_progress'),'on')
+        status=h.states['sensor.den_fan_control_status']
+        self.assertFalse(status.attributes['command_active']); self.assertIn('interrupted',status.attributes['error'])
+        count=len(h.remote_calls); h.service_error=False; h.run(event='startup'); h.run(event='resume_auto')
+        self.assertEqual(len(h.remote_calls),count)
+        self.assertEqual(h.states('input_select.den_fan_confidence'),'uncertain')
+        h.run(event='synchronize',target_function=h.mode,target_speed=h.speed)
+        self.assertEqual(h.error,'')
+    def test_interruption_after_send_before_history_write_requires_reference(self):
+        h=self.start()
+        def interrupt(name,entity,data):
+            if name=='remote.send_command': raise RuntimeError('Process interrupted')
+        h.after_action=interrupt; h.run(event='manual',target_function='cool')
+        self.assertEqual(h.mode,'circulate'); self.assertEqual(h.states('sensor.den_fan_state'),'exhaust_high')
+        h.after_action=None; h.run(event='startup'); h.run(event='resume_auto')
+        self.assertEqual(len(h.remote_calls),1); self.assertEqual(h.states('input_select.den_fan_confidence'),'uncertain')
+    def test_automatic_recovery_is_one_persistent_attempt(self):
+        h=Harness('den'); h.cfg['auto_recovery']=True
+        # Both scripts have their own embedded immutable cfg in real HA.
+        for script in h.package['script'].values():
+            if script['sequence'][0].get('variables',{}).get('cfg'): script['sequence'][0]['variables']['cfg']['auto_recovery']=True
+        h.boot=False; h.run()
+        self.assertEqual(sum(c[0]=='switch.turn_off' for c in h.calls),1)
+        for _ in range(4): h.run(event='startup'); h.advance(60); h.run()
+        self.assertEqual(sum(c[0]=='switch.turn_off' for c in h.calls),1)
+    def test_valid_climate_is_required_except_original_heat_exemption(self):
+        h=self.start(temp=74,rh=55); h.sensor('temperature','unknown'); h.run()
+        self.assertEqual(h.remote_calls,[]); self.assertIn('Climate unavailable',h.states('input_text.den_fan_reason'))
+        h.sensor('temperature',74); h.sensor('humidity','unavailable'); h.run(); self.assertEqual(h.remote_calls,[])
+        h.sensor('temperature',78); h.run(); self.assertEqual(h.mode,'cool')
+    def test_no_op_has_no_unnecessary_reset_and_fresh_conflict_blocks_change(self):
+        h=self.start(); h.run(event='manual',target_function='exhaust',target_speed='high'); self.assertEqual(h.remote_calls,[])
+        h.sensor('power',51); h.helper('input_select','confidence','inferred'); h.run(event='manual',target_function='cool')
+        self.assertEqual(h.remote_calls,[]); self.assertIn('conflicts',h.error)
 
     def test_27_celsius_temperature_is_converted(self):
         h=self.start(rh=52)
@@ -369,14 +438,6 @@ class Tests(unittest.TestCase):
         h.sensor('humidity',57); h.advance(60); h.run(); self.assertEqual(h.mode,'exhaust')
         h.sensor('temperature',78); h.run(); self.assertEqual(h.mode,'cool')
 
-    def test_34_interrupted_command_status_and_explicit_recovery(self):
-        h=self.start(temp=79,rh=60); h.run(event='synchronize',target_function='exhaust',target_speed='high')
-        h.helper('input_boolean','command_fault','on')
-        h.helper('input_text','error','Command in progress; if interrupted, confirm the fan setting before retrying.')
-        status=h.states['sensor.den_fan_control_status']
-        self.assertIn('paused',status.state); self.assertIn('interrupted',status.attributes['error'])
-        h.run(event='resume_auto'); self.assertEqual(h.mode,'cool'); self.assertEqual(h.error,'')
-
     def test_35_manual_hold_still_overrides_heat_priority(self):
         h=self.start(temp=80,rh=75); h.run(event='manual',target_function='circulate',target_speed='low')
         h.advance(3600); h.run(); self.assertEqual((h.mode,h.speed),('circulate','low'))
@@ -397,6 +458,5 @@ class Tests(unittest.TestCase):
         self.assertEqual(float(sample.state),45)
         self.assertEqual(sample.attributes['sampled_at'],h.now.isoformat())
 
-if __name__=='__main__':
-    import json
-    unittest.main(verbosity=2)
+
+if __name__=='__main__': unittest.main(verbosity=2)

@@ -1,13 +1,16 @@
-# Den window fan controller 1.6.0. Replace the previous den package.
-# Configure HARDWARE in build.py and ranges/settings in den_controller.py, then regenerate.
+# Den fan 1.7.0-dev - GENERIC EXAMPLE, configure privately before installing.
 input_boolean:
   den_fan_command_fault:
     name: "Den Fan Command Fault"
-  den_fan_boot_pending:
-    name: "Den Fan Startup Pending"
+  den_fan_command_in_progress:
+    name: "Den Fan Command In Progress"
+  den_fan_running:
+    name: "Den Fan Believed Running"
+  den_fan_auto_recovery_used:
+    name: "Den Fan Automatic Recovery Used"
 input_select:
   den_fan_confirmed_state:
-    name: "Den Fan Confirmed State"
+    name: "Den Fan Expected State"
     options:
       - "unknown"
       - "off"
@@ -20,6 +23,19 @@ input_select:
       - "circulate_low"
       - "circulate_med"
       - "circulate_high"
+  den_fan_confidence:
+    name: "Den Fan Confidence"
+    options:
+      - "uncertain"
+      - "inferred"
+      - "established"
+  den_fan_recovery:
+    name: "Den Fan Recovery"
+    options:
+      - "idle"
+      - "in_progress"
+      - "complete"
+      - "failed"
   den_fan_cycle:
     name: "Den Fan Cycle"
     options:
@@ -62,10 +78,6 @@ input_datetime:
     name: "Den Fan Cycle End"
     has_date: true
     has_time: true
-  den_fan_command_guard_until:
-    name: "Den Fan Command Guard Until"
-    has_date: true
-    has_time: true
   den_fan_last_command_time:
     name: "Den Fan Last Command Time"
     has_date: true
@@ -77,59 +89,59 @@ input_text:
   den_fan_error:
     name: "Den Fan Error"
     max: 255
+  den_fan_outcome:
+    name: "Den Fan Outcome"
+    max: 255
 template:
   - sensor:
       - name: "Den Fan Humidity Sample"
         unique_id: "den_fan_humidity_sample"
         device_class: "humidity"
         unit_of_measurement: "%"
-        availability: "{{ is_number(states('sensor.den_humidity')) and 0 <= states('sensor.den_humidity') | float <= 100 }}"
-        state: "{{ states('sensor.den_humidity') | float(none) }}"
+        availability: "{{ is_number(states('sensor.example_humidity')) and 0 <= states('sensor.example_humidity')|float <= 100 }}"
+        state: "{{ states('sensor.example_humidity')|float(none) }}"
         attributes:
           sampled_at: "{{ now().isoformat() }}"
       - name: "Den Fan Power Candidates"
         unique_id: "den_fan_power_candidates"
-        state: "{% set p = states('sensor.den_fan_power') %}{% if not is_number(p) or p | float < 0 %}unknown{% elif p | float < 10 %}off{% else %}{% set ranges = {\"cool_low\": [46, 47], \"cool_med\": [48, 50], \"cool_high\": [50, 53], \"exhaust_low\": [32, 33], \"exhaust_med\": [34, 35], \"exhaust_high\": [35, 38], \"circulate_low\": [39, 40], \"circulate_med\": [42, 43], \"circulate_high\": [44, 46]} %}{% set ns = namespace(matches=[]) %}{% for name, bounds in ranges.items() %}{% if bounds[0] - 0.5 <= p | float <= bounds[1] + 0.5 %}{% set ns.matches = ns.matches + [name] %}{% endif %}{% endfor %}{{ ns.matches | join('|') if ns.matches else 'unknown' }}{% endif %}"
+        state: "{% set p=states('sensor.example_fan_power') %}{% if not is_number(p) or p|float < 0 %}unknown{% elif p|float < 10 %}off{% else %}{% set ranges={\"cool_low\": [46, 47], \"cool_med\": [48, 50], \"cool_high\": [50, 53], \"exhaust_low\": [32, 33], \"exhaust_med\": [34, 35], \"exhaust_high\": [35, 38], \"circulate_low\": [39, 40], \"circulate_med\": [42, 43], \"circulate_high\": [44, 46]} %}{% set ns=namespace(matches=[]) %}{% for name,b in ranges.items() %}{% if b[0]-0.5 <= p|float <= b[1]+0.5 %}{% set ns.matches=ns.matches+[name] %}{% endif %}{% endfor %}{{ ns.matches|join('|') if ns.matches else 'unknown' }}{% endif %}"
       - name: "Den Fan State"
         unique_id: "den_fan_state"
         icon: "mdi:fan"
-        state: "{% set seen = states('sensor.den_fan_power_candidates').split('|') %}{% set known = states('input_select.den_fan_confirmed_state') %}{{ known if known in seen and known != 'unknown' else 'unknown' }}"
+        state: "{{ states('input_select.den_fan_confirmed_state') }}"
         attributes:
-          power_sensor: "sensor.den_fan_power"
+          power_sensor: "sensor.example_fan_power"
           calibration_prefix: "den_fan"
           manual_control: "{{ true }}"
           controller_script: "script.den_fan_set_state"
           status_sensor: "sensor.den_fan_control_status"
-          temperature_sensor: "sensor.den_temperature"
-          humidity_sensor: "sensor.den_humidity"
-          calibration_kind: "ranges"
-          calibration_ranges: "{{ {\"cool_low\": [46, 47], \"cool_med\": [48, 50], \"cool_high\": [50, 53], \"exhaust_low\": [32, 33], \"exhaust_med\": [34, 35], \"exhaust_high\": [35, 38], \"circulate_low\": [39, 40], \"circulate_med\": [42, 43], \"circulate_high\": [44, 46]} }}"
-          controller_version: "1.6.0"
-          range_tolerance: "{{ 0.5 }}"
-          confirm_script: "script.den_fan_confirm_state"
-          confidence: "{{ 'unconfirmed' if is_state('sensor.den_fan_state','unknown') else ('tracked' if '|' in states('sensor.den_fan_power_candidates') else 'measured') }}"
+          temperature_sensor: "sensor.example_temperature"
+          humidity_sensor: "sensor.example_humidity"
+          controller_version: "1.7.0-dev"
+          confidence: "{{ 'uncertain' if is_state('input_boolean.den_fan_command_in_progress','on') and not is_state('script.den_fan_executor','on') else states('input_select.den_fan_confidence') }}"
       - name: "Den Fan Control Status"
         unique_id: "den_fan_control_status"
         icon: "mdi:fan-auto"
-        state: "{% if is_state('input_boolean.den_fan_command_fault','on') %}{{ 'Applying fan setting' if is_state('script.den_fan_apply_state','on') else 'Automatic control paused: command not confirmed' }}{% elif (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now().timestamp() %}Manual hold{% elif states('input_text.den_fan_reason').startswith('Manual') %}Manual hold ended; awaiting Auto evaluation{% else %}{{ states('input_text.den_fan_reason') }}{% endif %}"
+        state: "{{ 'Applying setting' if is_state('script.den_fan_executor','on') else 'Manual hold' if (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now().timestamp() else 'Auto paused: recovery required' if is_state('input_boolean.den_fan_command_fault','on') or is_state('input_boolean.den_fan_command_in_progress','on') and not is_state('script.den_fan_executor','on') else states('input_text.den_fan_reason') }}"
         attributes:
           manual_until_timestamp: "{{ (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) }}"
           manual_active: "{{ (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now().timestamp() }}"
-          error: "{% set message=states('input_text.den_fan_error') %}{{ 'Previous command interrupted. Select the physical setting or use Resume Auto to retry from confirmed feedback.' if message.startswith('Command in progress') and not is_state('script.den_fan_apply_state','on') else message }}"
-          command_active: "{{ is_state('script.den_fan_apply_state','on') }}"
-          humidity_restart_limit: >-
-            {% set n=states('sensor.den_temperature') %}
-            {% if is_number(n) %}
-            {% set temp=n | float * 9/5+32 if state_attr('sensor.den_temperature','unit_of_measurement') == '°C' else n | float %}
-            {{ (58 if temp <= 72 else 58+(temp-72) if temp <= 76 else 62+(temp-76)*1.5 if temp < 78 else 65) | round(1) }}
-            {% else %}{{ none }}{% endif %}
-          humidity_rise_10m: "{{ states('sensor.den_humidity') | float - states('sensor.den_fan_humidity_min_10m') | float if is_number(states('sensor.den_humidity')) and is_number(states('sensor.den_fan_humidity_min_10m')) else none }}"
+          command_active: "{{ is_state('script.den_fan_executor','on') }}"
+          blocked: "{{ is_state('input_boolean.den_fan_command_fault','on') or is_state('input_boolean.den_fan_command_in_progress','on') and not is_state('script.den_fan_executor','on') }}"
+          error: "{{ 'Command interrupted or service failed. Confirm physical state or Recover. Last step: ' ~ states('input_text.den_fan_error') if is_state('input_boolean.den_fan_command_in_progress','on') and not is_state('script.den_fan_executor','on') else states('input_text.den_fan_error') }}"
+          confidence: "{{ 'uncertain' if is_state('input_boolean.den_fan_command_in_progress','on') and not is_state('script.den_fan_executor','on') else states('input_select.den_fan_confidence') }}"
+          expected_state: "{{ states('input_select.den_fan_confirmed_state') }}"
+          running: "{{ is_state('input_boolean.den_fan_running','on') }}"
+          evidence: "{% set cfg={'power': 'sensor.example_fan_power', 'plug': 'switch.example_fan_plug', 'remote': 'remote.example_remote', 'device': 'EXAMPLE_FAN', 'mode_command': 'EXAMPLE_MODE', 'speed_command': 'EXAMPLE_SPEED', 'power_on_command': 'EXAMPLE_ON', 'power_off_command': 'EXAMPLE_OFF', 'temperature': 'sensor.example_temperature', 'humidity': 'sensor.example_humidity', 'manual_minutes': 120, 'cool_at': 70, 'cool_stop': 68, 'max_rh': 65, 'heat_at': 78, 'heat_stop': 75, 'burst_minutes': 30, 'recovery_minutes': 10, 'rapid_rise_points': 8, 'off_seconds': 15, 'plug_delay': 3, 'startup_delay': 8, 'command_delay': 3, 'feedback_timeout': 30, 'power_stale_seconds': 120, 'off_below': 10, 'range_tolerance': 0.5, 'auto_recovery': False, 'ranges': {'cool_low': [46, 47], 'cool_med': [48, 50], 'cool_high': [50, 53], 'exhaust_low': [32, 33], 'exhaust_med': [34, 35], 'exhaust_high': [35, 38], 'circulate_low': [39, 40], 'circulate_med': [42, 43], 'circulate_high': [44, 46]}} %}{% set expected=states('input_select.den_fan_confirmed_state') %}{% if not (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) %}Power unavailable or stale; command history retained{% elif states(cfg.power)|float < cfg.off_below %}Fan appears stopped; recover or confirm physical state{% elif not (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance) %}Power conflicts with expected setting; inspect fan or recover{% elif '|' in states('sensor.den_fan_power_candidates') %}Overlapping power bands; expected setting retained{% else %}Power corroborates expected setting; IR delivery is not independently proven{% endif %}"
+          last_outcome: "{{ states('input_text.den_fan_outcome') }}"
+          recovery: "{{ 'failed' if is_state('input_boolean.den_fan_command_in_progress','on') and not is_state('script.den_fan_executor','on') and is_state('input_select.den_fan_recovery','in_progress') else states('input_select.den_fan_recovery') }}"
           requested_mode: "{{ states('input_select.den_fan_requested_mode') }}"
           requested_speed: "{{ states('input_select.den_fan_requested_speed') }}"
           cycle: "{{ states('input_select.den_fan_cycle') }}"
           cycle_end_timestamp: "{{ (state_attr('input_datetime.den_fan_cycle_end', 'timestamp') | float(0)) }}"
-          blocked: "{{ is_state('input_boolean.den_fan_command_fault','on') }}"
-          controller_version: "1.6.0"
+          humidity_restart_limit: "{% set n=states('sensor.example_temperature') %}\n{% if is_number(n) %}\n{% set temp=n | float * 9/5+32 if state_attr('sensor.example_temperature','unit_of_measurement') == '°C' else n | float %}\n{{ (58 if temp <= 72 else 58+(temp-72) if temp <= 76 else 62+(temp-76)*1.5 if temp < 78 else 65) | round(1) }}\n{% else %}{{ none }}{% endif %}"
+          humidity_rise_10m: "{{ states('sensor.example_humidity')|float - states('sensor.den_fan_humidity_min_10m')|float if is_number(states('sensor.example_humidity')) and is_number(states('sensor.den_fan_humidity_min_10m')) else none }}"
+          controller_version: "1.7.0-dev"
 sensor:
   - platform: "statistics"
     name: "Den Fan Humidity Min 10m"
@@ -141,12 +153,9 @@ sensor:
     sampling_size: 600
 script:
   den_fan_set_state:
-    alias: "Den Fan - Serialized Controller"
-    mode: "queued"
-    max: 10
-    max_exceeded: "silent"
-    trace:
-      stored_traces: 20
+    alias: "Den Fan - Request"
+    mode: "parallel"
+    max: 20
     fields:
       event:
         selector:
@@ -155,8 +164,10 @@ script:
               - "evaluate"
               - "observe"
               - "startup"
+              - "power_lost"
               - "manual"
               - "resume_auto"
+              - "recover"
               - "synchronize"
       target_function:
         selector:
@@ -175,15 +186,16 @@ script:
     sequence:
       - variables:
           cfg:
-            power: "sensor.den_fan_power"
-            plug: "switch.den_fan_plug"
-            remote: "remote.den_fan_remote"
-            device: "Den Fan"
-            mode_command: "mode_toggle"
-            speed_command: "speed_toggle"
-            power_command: ""
-            temperature: "sensor.den_temperature"
-            humidity: "sensor.den_humidity"
+            power: "sensor.example_fan_power"
+            plug: "switch.example_fan_plug"
+            remote: "remote.example_remote"
+            device: "EXAMPLE_FAN"
+            mode_command: "EXAMPLE_MODE"
+            speed_command: "EXAMPLE_SPEED"
+            power_on_command: "EXAMPLE_ON"
+            power_off_command: "EXAMPLE_OFF"
+            temperature: "sensor.example_temperature"
+            humidity: "sensor.example_humidity"
             manual_minutes: 120
             cool_at: 70
             cool_stop: 68
@@ -193,12 +205,15 @@ script:
             burst_minutes: 30
             recovery_minutes: 10
             rapid_rise_points: 8
-            feedback_timeout: 60
-            stable_seconds: 8
             off_seconds: 15
+            plug_delay: 3
+            startup_delay: 8
+            command_delay: 3
+            feedback_timeout: 30
+            power_stale_seconds: 120
             off_below: 10
             range_tolerance: 0.5
-            boot_state: "cool_low"
+            auto_recovery: false
             ranges:
               cool_low:
                 - 46
@@ -227,27 +242,226 @@ script:
               circulate_high:
                 - 44
                 - 46
-            press_delay: 1.5
       - variables:
-          event: "{{ event | default('evaluate') }}"
-          requested: "{{ target_function | default('') }}"
-          requested_speed: "{{ target_speed | default('') }}"
-          now_ts: "{{ now().timestamp() }}"
-          boot_recovered: "{{ false }}"
+          event: "{{ event|default('evaluate') }}"
+          requested: "{{ target_function|default('') }}"
+          requested_speed: "{{ target_speed|default('') }}"
       - if:
           - condition: "template"
-            value_template: "{{ event == 'manual' and (requested not in ['', 'cool','exhaust','circulate'] or requested_speed not in ['', 'low','med','high'] or (requested == '' and requested_speed == '')) }}"
+            value_template: "{{ event not in ['evaluate','observe','startup','power_lost','manual','resume_auto','recover','synchronize'] }}"
         then:
-          - stop: "Invalid manual request."
+          - stop: "Invalid event."
       - if:
           - condition: "template"
-            value_template: "{{ event in ['manual','synchronize'] }}"
+            value_template: "{{ requested not in ['', 'cool','exhaust','circulate'] or requested_speed not in ['', 'low','med','high'] }}"
+        then:
+          - stop: "Invalid setting."
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'manual' and requested == '' and requested_speed == '' }}"
+        then:
+          - stop: "Select a mode or speed."
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'synchronize' and (requested == '' or requested_speed == '') }}"
+        then:
+          - stop: "Select both physical axes."
+      - if:
+          - condition: "template"
+            value_template: "{{ event in ['manual','synchronize','recover'] }}"
         then:
           - action: "input_datetime.set_datetime"
             target:
               entity_id: "input_datetime.den_fan_manual_until"
             data:
-              timestamp: "{{ now_ts + cfg.manual_minutes * 60 }}"
+              timestamp: "{{ now().timestamp()+cfg.manual_minutes*60 }}"
+      - action: "script.den_fan_executor"
+        data:
+          event: "{{ event }}"
+          target_function: "{{ requested }}"
+          target_speed: "{{ requested_speed }}"
+        continue_on_error: true
+  den_fan_executor:
+    alias: "Den Fan - Serialized Hardware Executor"
+    mode: "queued"
+    max: 20
+    trace:
+      stored_traces: 20
+    fields:
+      event:
+        selector:
+          select:
+            options:
+              - "evaluate"
+              - "observe"
+              - "startup"
+              - "power_lost"
+              - "manual"
+              - "resume_auto"
+              - "recover"
+              - "synchronize"
+      target_function:
+        selector:
+          select:
+            options:
+              - "cool"
+              - "exhaust"
+              - "circulate"
+      target_speed:
+        selector:
+          select:
+            options:
+              - "low"
+              - "med"
+              - "high"
+    sequence:
+      - variables:
+          cfg:
+            power: "sensor.example_fan_power"
+            plug: "switch.example_fan_plug"
+            remote: "remote.example_remote"
+            device: "EXAMPLE_FAN"
+            mode_command: "EXAMPLE_MODE"
+            speed_command: "EXAMPLE_SPEED"
+            power_on_command: "EXAMPLE_ON"
+            power_off_command: "EXAMPLE_OFF"
+            temperature: "sensor.example_temperature"
+            humidity: "sensor.example_humidity"
+            manual_minutes: 120
+            cool_at: 70
+            cool_stop: 68
+            max_rh: 65
+            heat_at: 78
+            heat_stop: 75
+            burst_minutes: 30
+            recovery_minutes: 10
+            rapid_rise_points: 8
+            off_seconds: 15
+            plug_delay: 3
+            startup_delay: 8
+            command_delay: 3
+            feedback_timeout: 30
+            power_stale_seconds: 120
+            off_below: 10
+            range_tolerance: 0.5
+            auto_recovery: false
+            ranges:
+              cool_low:
+                - 46
+                - 47
+              cool_med:
+                - 48
+                - 50
+              cool_high:
+                - 50
+                - 53
+              exhaust_low:
+                - 32
+                - 33
+              exhaust_med:
+                - 34
+                - 35
+              exhaust_high:
+                - 35
+                - 38
+              circulate_low:
+                - 39
+                - 40
+              circulate_med:
+                - 42
+                - 43
+              circulate_high:
+                - 44
+                - 46
+      - variables:
+          event: "{{ event|default('evaluate') }}"
+          requested: "{{ target_function|default('') }}"
+          requested_speed: "{{ target_speed|default('') }}"
+          now_ts: "{{ now().timestamp() }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ is_state('input_boolean.den_fan_command_in_progress','on') }}"
+        then:
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confidence"
+            data:
+              option: "uncertain"
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: "Previous command interrupted or failed. Confirm physical state or Recover."
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_outcome"
+            data:
+              value: "Previous sequence incomplete"
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_command_in_progress"
+          - if:
+              - condition: "template"
+                value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_recovery"
+                data:
+                  option: "failed"
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'startup' }}"
+        then:
+          - if:
+              - condition: "template"
+                value_template: "{{ states('input_select.den_fan_confirmed_state') in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] and not is_state('input_boolean.den_fan_command_fault','on') }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_confidence"
+                data:
+                  option: "inferred"
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'synchronize' }}"
+        then:
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confirmed_state"
+            data:
+              option: "{{ requested ~ '_' ~ requested_speed }}"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confidence"
+            data:
+              option: "established"
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_running"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_manual_mode"
+            data:
+              option: "{{ requested }}"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_manual_speed"
+            data:
+              option: "{{ requested_speed }}"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_requested_mode"
+            data:
+              option: "{{ requested }}"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_requested_speed"
+            data:
+              option: "{{ requested_speed }}"
           - action: "input_select.select_option"
             target:
               entity_id: "input_select.den_fan_cycle"
@@ -258,11 +472,40 @@ script:
               entity_id: "input_datetime.den_fan_cycle_end"
             data:
               timestamp: "{{ now_ts }}"
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_auto_recovery_used"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_recovery"
+            data:
+              option: "idle"
           - action: "input_text.set_value"
             target:
               entity_id: "input_text.den_fan_reason"
             data:
-              value: "Manual hold"
+              value: "Manual hold: physical setting confirmed"
+          - variables:
+              expected: "{{ requested ~ '_' ~ requested_speed }}"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: "{{ 'Physical setting accepted; wattage disagrees or is unavailable. Check evidence before the next change.' if not ((is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance)) else '' }}"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_outcome"
+            data:
+              value: "Physical setting accepted without IR commands"
+          - stop: "Physical state confirmed."
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'power_lost' and is_state(cfg.plug,'on') }}"
+        then:
+          - stop: "Old plug-off event; power already restored."
       - if:
           - condition: "template"
             value_template: "{{ event == 'resume_auto' }}"
@@ -284,281 +527,188 @@ script:
               timestamp: "{{ now_ts }}"
       - if:
           - condition: "template"
-            value_template: "{{ event == 'startup' }}"
+            value_template: "{{ not is_state(cfg.plug,'on') or ((is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and states(cfg.power)|float < cfg.off_below) }}"
         then:
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_running"
           - action: "input_select.select_option"
             target:
-              entity_id: "input_select.den_fan_confirmed_state"
+              entity_id: "input_select.den_fan_confidence"
             data:
-              option: "unknown"
-      - variables:
-          known: "{{ states('input_select.den_fan_confirmed_state') }}"
-          seen: "{{ states('sensor.den_fan_power_candidates').split('|') }}"
-          stable: "{{ now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed, 0) >= cfg.stable_seconds }}"
-          was_blocked: "{{ is_state('input_boolean.den_fan_command_fault','on') }}"
-      - if:
-          - condition: "template"
-            value_template: "{{ seen == ['off'] }}"
-        then:
-          - if:
-              - condition: "template"
-                value_template: "{{ now_ts - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed,0) >= cfg.off_seconds }}"
-            then:
-              - action: "input_boolean.turn_on"
-                target:
-                  entity_id: "input_boolean.den_fan_boot_pending"
-              - action: "input_select.select_option"
-                target:
-                  entity_id: "input_select.den_fan_confirmed_state"
-                data:
-                  option: "off"
-              - action: "script.den_fan_apply_state"
-                data:
-                  operation: "power_on"
+              option: "uncertain"
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
           - action: "input_text.set_value"
             target:
-              entity_id: "input_text.den_fan_reason"
+              entity_id: "input_text.den_fan_error"
             data:
-              value: "Fan off; waiting for startup at Cool/Low"
-          - stop: "Waiting for fan startup."
+              value: "Fan power lost or fan stopped. Recover / Reinitialize before further toggles."
       - if:
           - condition: "template"
-            value_template: "{{ is_state('input_boolean.den_fan_boot_pending','on') }}"
+            value_template: "{{ event not in ['manual','recover','synchronize'] and (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now().timestamp() }}"
+        then:
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_command_in_progress"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: ""
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_outcome"
+            data:
+              value: "Auto yielded to manual request"
+          - stop: "Manual request takes priority."
+      - variables:
+          known: "{{ states('input_select.den_fan_confirmed_state') }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'manual' }}"
         then:
           - if:
               - condition: "template"
-                value_template: "{{ stable and (is_number(states(cfg.power)) and cfg.boot_state in cfg.ranges and cfg.ranges[cfg.boot_state][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[cfg.boot_state][1] + cfg.range_tolerance) }}"
+                value_template: "{{ known not in cfg.ranges and (requested == '' or requested_speed == '') }}"
             then:
               - action: "input_select.select_option"
                 target:
-                  entity_id: "input_select.den_fan_confirmed_state"
+                  entity_id: "input_select.den_fan_confidence"
                 data:
-                  option: "{{ cfg.boot_state }}"
-              - action: "input_boolean.turn_off"
-                target:
-                  entity_id: "input_boolean.den_fan_boot_pending"
-              - action: "input_boolean.turn_off"
+                  option: "uncertain"
+              - action: "input_boolean.turn_on"
                 target:
                   entity_id: "input_boolean.den_fan_command_fault"
               - action: "input_text.set_value"
                 target:
                   entity_id: "input_text.den_fan_error"
                 data:
-                  value: ""
-              - variables:
-                  known: "{{ cfg.boot_state }}"
-                  was_blocked: "{{ false }}"
-                  boot_recovered: "{{ true }}"
-            else:
-              - stop: "Waiting for measured startup at Cool/Low."
-      - if:
-          - condition: "template"
-            value_template: "{{ event == 'synchronize' }}"
-        then:
-          - variables:
-              chosen: "{{ requested ~ '_' ~ requested_speed }}"
-          - if:
-              - condition: "template"
-                value_template: "{{ not (is_number(states(cfg.power)) and chosen in cfg.ranges and cfg.ranges[chosen][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[chosen][1] + cfg.range_tolerance) }}"
-            then:
+                  value: "Unknown starting state. Confirm both axes or Recover before a one-axis request."
               - action: "input_text.set_value"
                 target:
-                  entity_id: "input_text.den_fan_error"
+                  entity_id: "input_text.den_fan_outcome"
                 data:
-                  value: "Physical selection does not match the measured range."
-              - stop: "Synchronization rejected."
-          - action: "input_select.select_option"
-            target:
-              entity_id: "input_select.den_fan_confirmed_state"
-            data:
-              option: "{{ chosen }}"
+                  value: "Stopped safely; physical reference required"
+              - if:
+                  - condition: "template"
+                    value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                then:
+                  - action: "input_select.select_option"
+                    target:
+                      entity_id: "input_select.den_fan_recovery"
+                    data:
+                      option: "failed"
+              - action: "input_boolean.turn_off"
+                target:
+                  entity_id: "input_boolean.den_fan_command_in_progress"
+              - stop: "Unknown starting state. Confirm both axes or Recover before a one-axis request."
+          - variables:
+              desired_mode: "{{ requested if requested else known.split('_')[0] }}"
+              desired_speed: "{{ requested_speed if requested_speed else known.split('_')[1] }}"
           - action: "input_select.select_option"
             target:
               entity_id: "input_select.den_fan_manual_mode"
             data:
-              option: "{{ requested }}"
+              option: "{{ desired_mode }}"
           - action: "input_select.select_option"
             target:
               entity_id: "input_select.den_fan_manual_speed"
             data:
-              option: "{{ requested_speed }}"
-          - action: "input_boolean.turn_off"
+              option: "{{ desired_speed }}"
+          - action: "input_select.select_option"
             target:
-              entity_id: "input_boolean.den_fan_command_fault"
+              entity_id: "input_select.den_fan_cycle"
+            data:
+              option: "normal"
+          - action: "input_datetime.set_datetime"
+            target:
+              entity_id: "input_datetime.den_fan_cycle_end"
+            data:
+              timestamp: "{{ now_ts }}"
           - action: "input_text.set_value"
             target:
-              entity_id: "input_text.den_fan_error"
+              entity_id: "input_text.den_fan_reason"
             data:
-              value: ""
-          - stop: "Physical setting confirmed; manual hold active. No remote commands sent."
-      - if:
-          - condition: "template"
-            value_template: "{{ not (is_number(states(cfg.power)) and known in cfg.ranges and cfg.ranges[known][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[known][1] + cfg.range_tolerance) }}"
-        then:
-          - if:
-              - condition: "template"
-                value_template: "{{ stable and seen | length == 1 and seen[0] in cfg.ranges }}"
-            then:
-              - action: "input_select.select_option"
-                target:
-                  entity_id: "input_select.den_fan_confirmed_state"
-                data:
-                  option: "{{ seen[0] }}"
-              - if:
-                  - condition: "template"
-                    value_template: "{{ known in cfg.ranges and not was_blocked and now_ts > (state_attr('input_datetime.den_fan_command_guard_until', 'timestamp') | float(0)) and event not in ['manual','resume_auto','startup'] }}"
-                then:
-                  - action: "input_select.select_option"
-                    target:
-                      entity_id: "input_select.den_fan_manual_mode"
-                    data:
-                      option: "{{ seen[0].split('_')[0] }}"
-                  - action: "input_select.select_option"
-                    target:
-                      entity_id: "input_select.den_fan_manual_speed"
-                    data:
-                      option: "{{ seen[0].split('_')[1] }}"
-                  - action: "input_datetime.set_datetime"
-                    target:
-                      entity_id: "input_datetime.den_fan_manual_until"
-                    data:
-                      timestamp: "{{ now_ts + cfg.manual_minutes*60 }}"
-                  - action: "input_select.select_option"
-                    target:
-                      entity_id: "input_select.den_fan_cycle"
-                    data:
-                      option: "normal"
-                  - action: "input_datetime.set_datetime"
-                    target:
-                      entity_id: "input_datetime.den_fan_cycle_end"
-                    data:
-                      timestamp: "{{ now_ts }}"
-                  - action: "input_text.set_value"
-                    target:
-                      entity_id: "input_text.den_fan_reason"
-                    data:
-                      value: "Manual hold: external fan change"
-              - variables:
-                  known: "{{ seen[0] }}"
-            else:
-              - action: "input_text.set_value"
-                target:
-                  entity_id: "input_text.den_fan_error"
-                data:
-                  value: "Fan state uncertain. Wait for a distinct reading or confirm the physical setting."
-              - stop: "No toggle commands sent."
-      - if:
-          - condition: "template"
-            value_template: "{{ event in ['manual','resume_auto'] }}"
-        then:
-          - action: "input_boolean.turn_off"
-            target:
-              entity_id: "input_boolean.den_fan_command_fault"
-          - action: "input_text.set_value"
-            target:
-              entity_id: "input_text.den_fan_error"
-            data:
-              value: ""
-      - if:
-          - condition: "template"
-            value_template: "{{ is_state('input_boolean.den_fan_command_fault','on') }}"
-        then:
-          - stop: "Previous command failed. Automatic retries remain paused."
-      - if:
-          - condition: "template"
-            value_template: "{{ event == 'manual' or (boot_recovered and (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now_ts) }}"
-        then:
-          - if:
-              - condition: "template"
-                value_template: "{{ event == 'manual' }}"
-            then:
-              - action: "input_select.select_option"
-                target:
-                  entity_id: "input_select.den_fan_manual_mode"
-                data:
-                  option: "{{ requested if requested else known.split('_')[0] }}"
-              - action: "input_select.select_option"
-                target:
-                  entity_id: "input_select.den_fan_manual_speed"
-                data:
-                  option: "{{ requested_speed if requested_speed else known.split('_')[1] }}"
-          - variables:
-              desired_mode: "{{ states('input_select.den_fan_manual_mode') }}"
-              desired_speed: "{{ states('input_select.den_fan_manual_speed') }}"
+              value: "Manual hold"
         else:
           - if:
               - condition: "template"
                 value_template: "{{ (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now_ts }}"
             then:
-              - stop: "Manual hold: automatic output suspended."
-          - if:
-              - condition: "template"
-                value_template: "{{ event == 'observe' and not boot_recovered }}"
-            then:
-              - stop: "Observed state updated; climate evaluation runs once per minute."
-          - variables:
-              temp: "{% set n=states(cfg.temperature) %}{{ (n | float * 9/5+32 if state_attr(cfg.temperature,'unit_of_measurement') == '°C' else n | float) if is_number(n) else none }}"
-              rh: "{{ states(cfg.humidity) | float(none) }}"
-              cycle: "{{ states('input_select.den_fan_cycle') }}"
-              cycle_end: "{{ (state_attr('input_datetime.den_fan_cycle_end', 'timestamp') | float(0)) }}"
-              rh_min: "{{ states('sensor.den_fan_humidity_min_10m') | float(none) }}"
-          - if:
-              - condition: "template"
-                value_template: "{{ temp is none or not (-100 < temp < 150) or ((rh is none or not (0 <= rh <= 100)) and not (temp >= cfg.heat_at or (cycle == \"heat_relief\" and temp > cfg.heat_stop))) }}"
-            then:
+              - if:
+                  - condition: "template"
+                    value_template: "{{ event != 'recover' }}"
+                then:
+                  - stop: "Manual hold: automatic output suspended."
+              - variables:
+                  desired_mode: "{{ states('input_select.den_fan_manual_mode') }}"
+                  desired_speed: "{{ states('input_select.den_fan_manual_speed') }}"
+            else:
+              - if:
+                  - condition: "template"
+                    value_template: "{{ event == 'observe' }}"
+                then:
+                  - stop: "Evidence updated; policy evaluates once per minute."
+              - variables:
+                  temp: "{% set n=states(cfg.temperature) %}{{ (n | float * 9/5+32 if state_attr(cfg.temperature,'unit_of_measurement') == '°C' else n | float) if is_number(n) else none }}"
+                  rh: "{{ states(cfg.humidity) | float(none) }}"
+                  cycle: "{{ states('input_select.den_fan_cycle') }}"
+                  cycle_end: "{{ (state_attr('input_datetime.den_fan_cycle_end', 'timestamp') | float(0)) }}"
+                  rh_min: "{{ states('sensor.den_fan_humidity_min_10m') | float(none) }}"
+              - if:
+                  - condition: "template"
+                    value_template: "{{ temp is none or not (-100 < temp < 150) or ((rh is none or not (0 <= rh <= 100)) and not (temp >= cfg.heat_at or (cycle == \"heat_relief\" and temp > cfg.heat_stop))) }}"
+                then:
+                  - action: "input_text.set_value"
+                    target:
+                      entity_id: "input_text.den_fan_reason"
+                    data:
+                      value: "Climate unavailable; keeping current fan setting"
+                  - stop: "No climate decision with invalid data."
+              - variables:
+                  plan: "{% set p=namespace(mode='exhaust',cycle=cycle,end=cycle_end,reason='Exhaust: building a humidity buffer') %}\n{% set limit=58 if temp <= 72 else 58+(temp-72) if temp <= 76 else 62+(temp-76)*1.5 if temp < 78 else 65 %}\n{% set rapid=rh is not none and rh_min is not none and rh-rh_min > cfg.rapid_rise_points %}\n{% if temp >= cfg.heat_at or (cycle == 'heat_relief' and temp > cfg.heat_stop) %}\n  {% set p.mode='cool' %}{% set p.cycle='heat_relief' %}{% set p.reason='Cooling: heat priority until ' ~ cfg.heat_stop ~ '°F; humidity limits suspended' %}\n  {% if cycle != 'heat_relief' or now_ts >= p.end %}{% set p.end=now_ts+cfg.burst_minutes*60 %}{% endif %}\n{% else %}\n  {% if cycle in ['burst','extended','heat_relief'] %}{% set p.cycle='cooling' %}{% endif %}\n  {% if p.cycle == 'cooling' %}\n    {% if temp <= cfg.cool_stop or rh >= cfg.max_rh or rapid %}\n      {% set p.cycle='recovery' %}{% set p.end=now_ts+cfg.recovery_minutes*60 %}\n    {% else %}\n      {% set p.mode='cool' %}{% set p.reason='Cooling: working toward ' ~ cfg.cool_stop ~ '°F' %}\n      {% if now_ts >= p.end %}{% set p.end=now_ts+cfg.burst_minutes*60 %}{% endif %}\n    {% endif %}\n  {% endif %}\n  {% if p.mode == 'exhaust' %}\n    {% if p.cycle == 'recovery' and now_ts >= p.end %}{% set p.cycle='normal' %}{% set p.end=0 %}{% endif %}\n    {% if p.cycle == 'recovery' %}{% set p.reason='Exhaust: drying; minimum recovery interval' %}\n    {% elif temp >= cfg.cool_at and rh <= limit and not rapid %}\n      {% set p.mode='cool' %}{% set p.cycle='cooling' %}{% set p.end=now_ts+cfg.burst_minutes*60 %}\n      {% set p.reason='Cooling: humidity buffer available' %}\n    {% elif temp >= cfg.cool_at %}{% set p.reason='Exhaust: drying toward ' ~ (limit | round(1)) ~ '% RH before cooling' %}\n    {% endif %}\n  {% endif %}\n{% endif %}\n{{ dict(mode=p.mode,cycle=p.cycle,end=p.end,reason=p.reason) }}"
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_cycle"
+                data:
+                  option: "{{ plan.cycle }}"
+              - action: "input_datetime.set_datetime"
+                target:
+                  entity_id: "input_datetime.den_fan_cycle_end"
+                data:
+                  timestamp: "{{ plan.end }}"
               - action: "input_text.set_value"
                 target:
                   entity_id: "input_text.den_fan_reason"
                 data:
-                  value: "Climate unavailable; keeping current fan setting"
-              - stop: "No climate decision with invalid data."
+                  value: "{{ plan.reason }}"
+              - variables:
+                  desired_mode: "{{ plan.mode }}"
+                  desired_speed: "high"
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'recover' }}"
+        then:
           - variables:
-              plan: >-
-                {% set p=namespace(mode='exhaust',cycle=cycle,end=cycle_end,reason='Exhaust: building a humidity buffer') %}
-                {% set limit=58 if temp <= 72 else 58+(temp-72) if temp <= 76 else 62+(temp-76)*1.5 if temp < 78 else 65 %}
-                {% set rapid=rh is not none and rh_min is not none and rh-rh_min > cfg.rapid_rise_points %}
-                {% if temp >= cfg.heat_at or (cycle == 'heat_relief' and temp > cfg.heat_stop) %}
-                  {% set p.mode='cool' %}{% set p.cycle='heat_relief' %}{% set p.reason='Cooling: heat priority until ' ~ cfg.heat_stop ~ '°F; humidity limits suspended' %}
-                  {% if cycle != 'heat_relief' or now_ts >= p.end %}{% set p.end=now_ts+cfg.burst_minutes*60 %}{% endif %}
-                {% else %}
-                  {% if cycle in ['burst','extended','heat_relief'] %}{% set p.cycle='cooling' %}{% endif %}
-                  {% if p.cycle == 'cooling' %}
-                    {% if temp <= cfg.cool_stop or rh >= cfg.max_rh or rapid %}
-                      {% set p.cycle='recovery' %}{% set p.end=now_ts+cfg.recovery_minutes*60 %}
-                    {% else %}
-                      {% set p.mode='cool' %}{% set p.reason='Cooling: working toward ' ~ cfg.cool_stop ~ '°F' %}
-                      {% if now_ts >= p.end %}{% set p.end=now_ts+cfg.burst_minutes*60 %}{% endif %}
-                    {% endif %}
-                  {% endif %}
-                  {% if p.mode == 'exhaust' %}
-                    {% if p.cycle == 'recovery' and now_ts >= p.end %}{% set p.cycle='normal' %}{% set p.end=0 %}{% endif %}
-                    {% if p.cycle == 'recovery' %}{% set p.reason='Exhaust: drying; minimum recovery interval' %}
-                    {% elif temp >= cfg.cool_at and rh <= limit and not rapid %}
-                      {% set p.mode='cool' %}{% set p.cycle='cooling' %}{% set p.end=now_ts+cfg.burst_minutes*60 %}
-                      {% set p.reason='Cooling: humidity buffer available' %}
-                    {% elif temp >= cfg.cool_at %}{% set p.reason='Exhaust: drying toward ' ~ (limit | round(1)) ~ '% RH before cooling' %}
-                    {% endif %}
-                  {% endif %}
-                {% endif %}
-                {{ dict(mode=p.mode,cycle=p.cycle,end=p.end,reason=p.reason) }}
+              desired_mode: "{{ requested if requested else states('input_select.den_fan_requested_mode') }}"
+              desired_speed: "{{ requested_speed if requested_speed else states('input_select.den_fan_requested_speed') }}"
           - action: "input_select.select_option"
             target:
-              entity_id: "input_select.den_fan_cycle"
+              entity_id: "input_select.den_fan_manual_mode"
             data:
-              option: "{{ plan.cycle }}"
-          - action: "input_datetime.set_datetime"
+              option: "{{ desired_mode }}"
+          - action: "input_select.select_option"
             target:
-              entity_id: "input_datetime.den_fan_cycle_end"
+              entity_id: "input_select.den_fan_manual_speed"
             data:
-              timestamp: "{{ plan.end }}"
+              option: "{{ desired_speed }}"
           - action: "input_text.set_value"
             target:
               entity_id: "input_text.den_fan_reason"
             data:
-              value: "{{ plan.reason }}"
-          - variables:
-              desired_mode: "{{ plan.mode }}"
-              desired_speed: "high"
+              value: "Manual hold: recovery requested"
       - action: "input_select.select_option"
         target:
           entity_id: "input_select.den_fan_requested_mode"
@@ -569,184 +719,420 @@ script:
           entity_id: "input_select.den_fan_requested_speed"
         data:
           option: "{{ desired_speed }}"
+      - variables:
+          needs_reference: "{{ known not in cfg.ranges or is_state('input_select.den_fan_confidence','uncertain') or is_state('input_boolean.den_fan_command_fault','on') }}"
       - if:
           - condition: "template"
-            value_template: "{{ known == desired_mode ~ '_' ~ desired_speed }}"
+            value_template: "{{ event == 'recover' or (needs_reference and cfg.auto_recovery and not is_state('input_boolean.den_fan_auto_recovery_used','on') and event not in ['manual','observe','power_lost']) }}"
         then:
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_auto_recovery_used"
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_command_in_progress"
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_recovery"
+            data:
+              option: "in_progress"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confidence"
+            data:
+              option: "uncertain"
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_running"
           - action: "input_text.set_value"
             target:
               entity_id: "input_text.den_fan_error"
             data:
-              value: ""
-          - stop: "Requested setting already confirmed; no hardware actions."
-      - action: "input_boolean.turn_on"
-        target:
-          entity_id: "input_boolean.den_fan_command_fault"
-      - action: "input_text.set_value"
-        target:
-          entity_id: "input_text.den_fan_error"
-        data:
-          value: "Command in progress; if interrupted, confirm the fan setting before retrying."
-      - action: "script.den_fan_apply_state"
-        data:
-          target_function: "{{ desired_mode }}"
-          target_speed: "{{ desired_speed }}"
-  den_fan_apply_state:
-    alias: "Den Fan - Apply Confirmed State"
-    mode: "single"
-    trace:
-      stored_traces: 20
-    fields:
-      target_function:
-        selector:
-          select:
-            options:
-              - "cool"
-              - "exhaust"
-              - "circulate"
-      target_speed:
-        selector:
-          select:
-            options:
-              - "low"
-              - "med"
-              - "high"
-    sequence:
-      - variables:
-          cfg:
-            power: "sensor.den_fan_power"
-            plug: "switch.den_fan_plug"
-            remote: "remote.den_fan_remote"
-            device: "Den Fan"
-            mode_command: "mode_toggle"
-            speed_command: "speed_toggle"
-            power_command: ""
-            temperature: "sensor.den_temperature"
-            humidity: "sensor.den_humidity"
-            manual_minutes: 120
-            cool_at: 70
-            cool_stop: 68
-            max_rh: 65
-            heat_at: 78
-            heat_stop: 75
-            burst_minutes: 30
-            recovery_minutes: 10
-            rapid_rise_points: 8
-            feedback_timeout: 60
-            stable_seconds: 8
-            off_seconds: 15
-            off_below: 10
-            range_tolerance: 0.5
-            boot_state: "cool_low"
-            ranges:
-              cool_low:
-                - 46
-                - 47
-              cool_med:
-                - 48
-                - 50
-              cool_high:
-                - 50
-                - 53
-              exhaust_low:
-                - 32
-                - 33
-              exhaust_med:
-                - 34
-                - 35
-              exhaust_high:
-                - 35
-                - 38
-              circulate_low:
-                - 39
-                - 40
-              circulate_med:
-                - 42
-                - 43
-              circulate_high:
-                - 44
-                - 46
-            press_delay: 1.5
-      - if:
-          - condition: "template"
-            value_template: "{{ operation | default('apply') == 'power_on' }}"
-        then:
+              value: "Recovery step: cutting plug power. If interrupted, run Recover manually."
+          - variables:
+              off_at: "{{ now().timestamp() }}"
+          - action: "switch.turn_off"
+            target:
+              entity_id: "switch.example_fan_plug"
+          - variables:
+              deadline: "{{ now().timestamp()+cfg.feedback_timeout }}"
+          - repeat:
+              sequence:
+                - delay:
+                    seconds: 1
+              until:
+                - condition: "template"
+                  value_template: "{{ (is_state(cfg.plug,'off')) or now().timestamp() >= deadline }}"
           - if:
               - condition: "template"
-                value_template: "{{ states('sensor.den_fan_power_candidates') == 'off' and now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed,0) >= cfg.off_seconds }}"
+                value_template: "{{ not (is_state(cfg.plug,'off')) }}"
             then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_confidence"
+                data:
+                  option: "uncertain"
+              - action: "input_boolean.turn_on"
+                target:
+                  entity_id: "input_boolean.den_fan_command_fault"
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_error"
+                data:
+                  value: "Recovery failed: plug did not report OFF."
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_outcome"
+                data:
+                  value: "Stopped safely; physical reference required"
               - if:
                   - condition: "template"
-                    value_template: "{{ is_state(cfg.plug,'off') }}"
+                    value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
                 then:
-                  - action: "switch.turn_on"
+                  - action: "input_select.select_option"
                     target:
-                      entity_id: "switch.den_fan_plug"
-                else:
-                  - if:
-                      - condition: "template"
-                        value_template: "{{ cfg.power_command != '' }}"
-                    then:
-                      - action: "remote.send_command"
-                        target:
-                          entity_id: "remote.den_fan_remote"
-                        data:
-                          device: "Den Fan"
-                          command: "{{ cfg.power_command }}"
-          - stop: "Power-on recovery requested; waiting for the startup reference."
-      - variables:
-          target: "{{ target_function ~ '_' ~ target_speed }}"
-      - if:
-          - condition: "template"
-            value_template: "{{ target not in cfg.ranges }}"
-        then:
-          - action: "input_boolean.turn_on"
-            target:
-              entity_id: "input_boolean.den_fan_command_fault"
-          - action: "input_select.select_option"
-            target:
-              entity_id: "input_select.den_fan_confirmed_state"
-            data:
-              option: "unknown"
+                      entity_id: "input_select.den_fan_recovery"
+                    data:
+                      option: "failed"
+              - action: "input_boolean.turn_off"
+                target:
+                  entity_id: "input_boolean.den_fan_command_in_progress"
+              - stop: "Recovery failed: plug did not report OFF."
+          - delay:
+              seconds: 15
+          - variables:
+              deadline: "{{ now().timestamp()+cfg.feedback_timeout }}"
+          - repeat:
+              sequence:
+                - delay:
+                    seconds: 1
+              until:
+                - condition: "template"
+                  value_template: "{{ ((is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and states(cfg.power)|float < cfg.off_below and as_timestamp(states[cfg.power].last_reported,0) >= off_at) or now().timestamp() >= deadline }}"
+          - if:
+              - condition: "template"
+                value_template: "{{ not ((is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and states(cfg.power)|float < cfg.off_below and as_timestamp(states[cfg.power].last_reported,0) >= off_at) }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_confidence"
+                data:
+                  option: "uncertain"
+              - action: "input_boolean.turn_on"
+                target:
+                  entity_id: "input_boolean.den_fan_command_fault"
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_error"
+                data:
+                  value: "Recovery failed: no fresh stopped-power reading while plug OFF. No Power On sent."
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_outcome"
+                data:
+                  value: "Stopped safely; physical reference required"
+              - if:
+                  - condition: "template"
+                    value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                then:
+                  - action: "input_select.select_option"
+                    target:
+                      entity_id: "input_select.den_fan_recovery"
+                    data:
+                      option: "failed"
+              - action: "input_boolean.turn_off"
+                target:
+                  entity_id: "input_boolean.den_fan_command_in_progress"
+              - stop: "Recovery failed: no fresh stopped-power reading while plug OFF. No Power On sent."
           - action: "input_text.set_value"
             target:
               entity_id: "input_text.den_fan_error"
             data:
-              value: "Invalid requested fan setting."
-          - stop: "Invalid requested fan setting."
-      - variables:
-          current: "{{ states('input_select.den_fan_confirmed_state') }}"
-      - if:
-          - condition: "template"
-            value_template: "{{ not (is_number(states(cfg.power)) and current in cfg.ranges and cfg.ranges[current][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[current][1] + cfg.range_tolerance) }}"
-        then:
-          - action: "input_boolean.turn_on"
+              value: "Recovery step: restoring plug power."
+          - action: "switch.turn_on"
             target:
-              entity_id: "input_boolean.den_fan_command_fault"
-          - action: "input_select.select_option"
-            target:
-              entity_id: "input_select.den_fan_confirmed_state"
-            data:
-              option: "unknown"
+              entity_id: "switch.example_fan_plug"
+          - variables:
+              deadline: "{{ now().timestamp()+cfg.feedback_timeout }}"
+          - repeat:
+              sequence:
+                - delay:
+                    seconds: 1
+              until:
+                - condition: "template"
+                  value_template: "{{ (is_state(cfg.plug,'on')) or now().timestamp() >= deadline }}"
+          - if:
+              - condition: "template"
+                value_template: "{{ not (is_state(cfg.plug,'on')) }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_confidence"
+                data:
+                  option: "uncertain"
+              - action: "input_boolean.turn_on"
+                target:
+                  entity_id: "input_boolean.den_fan_command_fault"
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_error"
+                data:
+                  value: "Recovery failed: plug did not report ON."
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_outcome"
+                data:
+                  value: "Stopped safely; physical reference required"
+              - if:
+                  - condition: "template"
+                    value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                then:
+                  - action: "input_select.select_option"
+                    target:
+                      entity_id: "input_select.den_fan_recovery"
+                    data:
+                      option: "failed"
+              - action: "input_boolean.turn_off"
+                target:
+                  entity_id: "input_boolean.den_fan_command_in_progress"
+              - stop: "Recovery failed: plug did not report ON."
+          - delay:
+              seconds: 3
           - action: "input_text.set_value"
             target:
               entity_id: "input_text.den_fan_error"
             data:
-              value: "Current fan setting is uncertain. Confirm the physical setting before sending toggles."
-          - stop: "Current fan setting is uncertain. Confirm the physical setting before sending toggles."
-      - if:
-          - condition: "template"
-            value_template: "{{ current == target }}"
-        then:
+              value: "Recovery step: sending Power On; waiting for fresh running wattage."
+          - variables:
+              sent_at: "{{ now().timestamp() }}"
+          - action: "remote.send_command"
+            target:
+              entity_id: "remote.example_remote"
+            data:
+              device: "EXAMPLE_FAN"
+              command: "EXAMPLE_ON"
+              num_repeats: 1
+          - delay:
+              seconds: 8
+          - variables:
+              deadline: "{{ now().timestamp()+cfg.feedback_timeout }}"
+          - repeat:
+              sequence:
+                - delay:
+                    seconds: 1
+              until:
+                - condition: "template"
+                  value_template: "{{ ((is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and states(cfg.power)|float >= cfg.off_below and as_timestamp(states[cfg.power].last_reported,0) > sent_at) or now().timestamp() >= deadline }}"
+          - if:
+              - condition: "template"
+                value_template: "{{ not ((is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and states(cfg.power)|float >= cfg.off_below and as_timestamp(states[cfg.power].last_reported,0) > sent_at) }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_confidence"
+                data:
+                  option: "uncertain"
+              - action: "input_boolean.turn_on"
+                target:
+                  entity_id: "input_boolean.den_fan_command_fault"
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_error"
+                data:
+                  value: "Recovery failed: Power On produced no fresh running evidence. Inspect plug, fan and BroadLink."
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_outcome"
+                data:
+                  value: "Stopped safely; physical reference required"
+              - if:
+                  - condition: "template"
+                    value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                then:
+                  - action: "input_select.select_option"
+                    target:
+                      entity_id: "input_select.den_fan_recovery"
+                    data:
+                      option: "failed"
+              - action: "input_boolean.turn_off"
+                target:
+                  entity_id: "input_boolean.den_fan_command_in_progress"
+              - stop: "Recovery failed: Power On produced no fresh running evidence. Inspect plug, fan and BroadLink."
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confirmed_state"
+            data:
+              option: "cool_low"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confidence"
+            data:
+              option: "established"
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_running"
           - action: "input_boolean.turn_off"
             target:
               entity_id: "input_boolean.den_fan_command_fault"
+          - variables:
+              known: "cool_low"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_outcome"
+            data:
+              value: "Cool/Low reference established after power reset"
+        else:
+          - if:
+              - condition: "template"
+                value_template: "{{ needs_reference }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_confidence"
+                data:
+                  option: "uncertain"
+              - action: "input_boolean.turn_on"
+                target:
+                  entity_id: "input_boolean.den_fan_command_fault"
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_error"
+                data:
+                  value: "State uncertain. Confirm Physical State or Recover / Reinitialize; no toggles sent."
+              - action: "input_text.set_value"
+                target:
+                  entity_id: "input_text.den_fan_outcome"
+                data:
+                  value: "Stopped safely; physical reference required"
+              - if:
+                  - condition: "template"
+                    value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                then:
+                  - action: "input_select.select_option"
+                    target:
+                      entity_id: "input_select.den_fan_recovery"
+                    data:
+                      option: "failed"
+              - action: "input_boolean.turn_off"
+                target:
+                  entity_id: "input_boolean.den_fan_command_in_progress"
+              - stop: "State uncertain. Confirm Physical State or Recover / Reinitialize; no toggles sent."
+      - if:
+          - condition: "template"
+            value_template: "{{ not is_state(cfg.plug,'on') }}"
+        then:
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_running"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confidence"
+            data:
+              option: "uncertain"
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
           - action: "input_text.set_value"
             target:
               entity_id: "input_text.den_fan_error"
             data:
-              value: ""
-          - stop: "Already at requested setting; no commands sent."
+              value: "Plug is not on. Recover after power is restored."
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_outcome"
+            data:
+              value: "Stopped safely; physical reference required"
+          - if:
+              - condition: "template"
+                value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_recovery"
+                data:
+                  option: "failed"
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_command_in_progress"
+          - stop: "Plug is not on. Recover after power is restored."
+      - if:
+          - condition: "template"
+            value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and states(cfg.power)|float < cfg.off_below }}"
+        then:
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_running"
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confidence"
+            data:
+              option: "uncertain"
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: "Fan appears stopped. Recover before sending toggles."
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_outcome"
+            data:
+              value: "Stopped safely; physical reference required"
+          - if:
+              - condition: "template"
+                value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_recovery"
+                data:
+                  option: "failed"
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_command_in_progress"
+          - stop: "Fan appears stopped. Recover before sending toggles."
+      - variables:
+          expected: "{{ states('input_select.den_fan_confirmed_state') }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and not (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance) and not is_state('input_select.den_fan_confidence','established') }}"
+        then:
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_confidence"
+            data:
+              option: "uncertain"
+          - action: "input_boolean.turn_on"
+            target:
+              entity_id: "input_boolean.den_fan_command_fault"
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_error"
+            data:
+              value: "Power conflicts with expected state. Confirm physical setting or Recover; history retained."
+          - action: "input_text.set_value"
+            target:
+              entity_id: "input_text.den_fan_outcome"
+            data:
+              value: "Stopped safely; physical reference required"
+          - if:
+              - condition: "template"
+                value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+            then:
+              - action: "input_select.select_option"
+                target:
+                  entity_id: "input_select.den_fan_recovery"
+                data:
+                  option: "failed"
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_command_in_progress"
+          - stop: "Power conflicts with expected state. Confirm physical setting or Recover; history retained."
       - variables:
           mode_order:
             - "cool"
@@ -757,189 +1143,570 @@ script:
             - "med"
             - "high"
       - variables:
-          mode_presses: "{{ (mode_order.index(target_function) - mode_order.index(current.split('_')[0])) % 3 }}"
-      - alias: "Confirm each mode press"
-        repeat:
+          mode_presses: "{{ (mode_order.index(desired_mode)-mode_order.index(known.split('_')[0]))%3 }}"
+          speed_presses: "{{ (speed_order.index(desired_speed)-speed_order.index(known.split('_')[1]))%3 }}"
+      - repeat:
           count: "{{ mode_presses }}"
           sequence:
-            - variables:
-                before: "{{ states('input_select.den_fan_confirmed_state') }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) }}"
+                  value_template: "{{ event not in ['manual','recover','synchronize'] and (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now().timestamp() }}"
               then:
-                - action: "input_boolean.turn_on"
+                - action: "input_boolean.turn_off"
                   target:
-                    entity_id: "input_boolean.den_fan_command_fault"
-                - action: "input_select.select_option"
-                  target:
-                    entity_id: "input_select.den_fan_confirmed_state"
-                  data:
-                    option: "unknown"
+                    entity_id: "input_boolean.den_fan_command_in_progress"
                 - action: "input_text.set_value"
                   target:
                     entity_id: "input_text.den_fan_error"
                   data:
-                    value: "Power no longer supports the last confirmed setting. No further presses sent."
-                - stop: "Power no longer supports the last confirmed setting. No further presses sent."
+                    value: ""
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Auto yielded to manual request"
+                - stop: "Manual request takes priority."
+            - if:
+                - condition: "template"
+                  value_template: "{{ not is_state(cfg.plug,'on') }}"
+              then:
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_running"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confidence"
+                  data:
+                    option: "uncertain"
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_error"
+                  data:
+                    value: "Plug is not on. Recover after power is restored."
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Stopped safely; physical reference required"
+                - if:
+                    - condition: "template"
+                      value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                  then:
+                    - action: "input_select.select_option"
+                      target:
+                        entity_id: "input_select.den_fan_recovery"
+                      data:
+                        option: "failed"
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_in_progress"
+                - stop: "Plug is not on. Recover after power is restored."
+            - if:
+                - condition: "template"
+                  value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and states(cfg.power)|float < cfg.off_below }}"
+              then:
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_running"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confidence"
+                  data:
+                    option: "uncertain"
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_error"
+                  data:
+                    value: "Fan appears stopped. Recover before sending toggles."
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Stopped safely; physical reference required"
+                - if:
+                    - condition: "template"
+                      value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                  then:
+                    - action: "input_select.select_option"
+                      target:
+                        entity_id: "input_select.den_fan_recovery"
+                      data:
+                        option: "failed"
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_in_progress"
+                - stop: "Fan appears stopped. Recover before sending toggles."
+            - variables:
+                before: "{{ states('input_select.den_fan_confirmed_state') }}"
             - variables:
                 expected: "{{ mode_order[(mode_order.index(before.split('_')[0])+1)%3] ~ '_' ~ before.split('_')[1] }}"
-                sent_at: "{{ now().timestamp() }}"
-                deadline: "{{ now().timestamp() + cfg.feedback_timeout }}"
-            - action: "input_datetime.set_datetime"
+            - action: "input_boolean.turn_on"
               target:
-                entity_id: "input_datetime.den_fan_command_guard_until"
+                entity_id: "input_boolean.den_fan_command_in_progress"
+            - action: "input_select.select_option"
+              target:
+                entity_id: "input_select.den_fan_confidence"
               data:
-                timestamp: "{{ deadline + cfg.stable_seconds + 5 }}"
+                option: "inferred"
+            - action: "input_text.set_value"
+              target:
+                entity_id: "input_text.den_fan_error"
+              data:
+                value: "{{ 'Sending mode press toward ' ~ expected ~ '. If interrupted, confirm state or Recover.' }}"
+            - variables:
+                sent_at: "{{ now().timestamp() }}"
             - action: "remote.send_command"
               target:
-                entity_id: "remote.den_fan_remote"
+                entity_id: "remote.example_remote"
               data:
-                device: "Den Fan"
-                command: "mode_toggle"
+                device: "EXAMPLE_FAN"
+                command: "EXAMPLE_MODE"
+                num_repeats: 1
+            - action: "input_select.select_option"
+              target:
+                entity_id: "input_select.den_fan_confirmed_state"
+              data:
+                option: "{{ expected }}"
+            - action: "input_datetime.set_datetime"
+              target:
+                entity_id: "input_datetime.den_fan_last_command_time"
+              data:
+                timestamp: "{{ now().timestamp() }}"
+            - delay:
+                seconds: 3
+            - variables:
+                deadline: "{{ now().timestamp()+cfg.feedback_timeout }}"
             - repeat:
                 sequence:
                   - delay:
                       seconds: 1
                 until:
                   - condition: "template"
-                    value_template: "{{ (is_number(states(cfg.power)) and expected in cfg.ranges and cfg.ranges[expected][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[expected][1] + cfg.range_tolerance and not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) and as_timestamp(states[cfg.power].last_updated,0) > sent_at and now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed, 0) >= cfg.stable_seconds) or now().timestamp() >= deadline }}"
+                    value_template: "{{ now().timestamp() >= deadline or ((is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance) and as_timestamp(states[cfg.power].last_reported,0) > sent_at) }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and expected in cfg.ranges and cfg.ranges[expected][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[expected][1] + cfg.range_tolerance and not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) and as_timestamp(states[cfg.power].last_updated,0) > sent_at and now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed, 0) >= cfg.stable_seconds) }}"
+                  value_template: "{{ not is_state(cfg.plug,'on') }}"
               then:
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_running"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confidence"
+                  data:
+                    option: "uncertain"
                 - action: "input_boolean.turn_on"
                   target:
                     entity_id: "input_boolean.den_fan_command_fault"
-                - action: "input_select.select_option"
-                  target:
-                    entity_id: "input_select.den_fan_confirmed_state"
-                  data:
-                    option: "unknown"
                 - action: "input_text.set_value"
                   target:
                     entity_id: "input_text.den_fan_error"
                   data:
-                    value: "{{ ('Unconfirmed ' ~ expected ~ ': ' ~ states(cfg.power) ~ ' W. Automatic retries paused; confirm the fan setting.')[:255] }}"
-                - stop: "{{ ('Unconfirmed ' ~ expected ~ ': ' ~ states(cfg.power) ~ ' W. Automatic retries paused; confirm the fan setting.')[:255] }}"
-            - action: "input_select.select_option"
+                    value: "Plug is not on. Recover after power is restored."
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Stopped safely; physical reference required"
+                - if:
+                    - condition: "template"
+                      value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                  then:
+                    - action: "input_select.select_option"
+                      target:
+                        entity_id: "input_select.den_fan_recovery"
+                      data:
+                        option: "failed"
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_in_progress"
+                - stop: "Plug is not on. Recover after power is restored."
+            - if:
+                - condition: "template"
+                  value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and states(cfg.power)|float < cfg.off_below }}"
+              then:
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_running"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confidence"
+                  data:
+                    option: "uncertain"
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_error"
+                  data:
+                    value: "Fan appears stopped. Recover before sending toggles."
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Stopped safely; physical reference required"
+                - if:
+                    - condition: "template"
+                      value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                  then:
+                    - action: "input_select.select_option"
+                      target:
+                        entity_id: "input_select.den_fan_recovery"
+                      data:
+                        option: "failed"
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_in_progress"
+                - stop: "Fan appears stopped. Recover before sending toggles."
+            - if:
+                - condition: "template"
+                  value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and as_timestamp(states[cfg.power].last_reported,0) > sent_at and not (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance) }}"
+              then:
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confidence"
+                  data:
+                    option: "uncertain"
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_error"
+                  data:
+                    value: "Wattage contradicts the last press after timeout. Sequence stopped; confirm or Recover."
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Stopped safely; physical reference required"
+                - if:
+                    - condition: "template"
+                      value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                  then:
+                    - action: "input_select.select_option"
+                      target:
+                        entity_id: "input_select.den_fan_recovery"
+                      data:
+                        option: "failed"
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_in_progress"
+                - stop: "Wattage contradicts the last press after timeout. Sequence stopped; confirm or Recover."
+            - action: "input_text.set_value"
               target:
-                entity_id: "input_select.den_fan_confirmed_state"
+                entity_id: "input_text.den_fan_outcome"
               data:
-                option: "{{ expected }}"
-      - variables:
-          current: "{{ states('input_select.den_fan_confirmed_state') }}"
-      - variables:
-          speed_presses: "{{ (speed_order.index(target_speed) - speed_order.index(current.split('_')[1])) % 3 }}"
-      - alias: "Confirm each speed press"
-        repeat:
+                value: "{{ 'Expected ' ~ expected ~ '; power corroborates, delivery unproven' if (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance) and as_timestamp(states[cfg.power].last_reported,0) > sent_at else 'Expected ' ~ expected ~ '; fresh power unavailable, delivery unproven' }}"
+            - action: "input_boolean.turn_off"
+              target:
+                entity_id: "input_boolean.den_fan_command_in_progress"
+      - repeat:
           count: "{{ speed_presses }}"
           sequence:
-            - variables:
-                before: "{{ states('input_select.den_fan_confirmed_state') }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) }}"
+                  value_template: "{{ event not in ['manual','recover','synchronize'] and (state_attr('input_datetime.den_fan_manual_until', 'timestamp') | float(0)) > now().timestamp() }}"
               then:
-                - action: "input_boolean.turn_on"
+                - action: "input_boolean.turn_off"
                   target:
-                    entity_id: "input_boolean.den_fan_command_fault"
-                - action: "input_select.select_option"
-                  target:
-                    entity_id: "input_select.den_fan_confirmed_state"
-                  data:
-                    option: "unknown"
+                    entity_id: "input_boolean.den_fan_command_in_progress"
                 - action: "input_text.set_value"
                   target:
                     entity_id: "input_text.den_fan_error"
                   data:
-                    value: "Power no longer supports the last confirmed setting. No further presses sent."
-                - stop: "Power no longer supports the last confirmed setting. No further presses sent."
+                    value: ""
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Auto yielded to manual request"
+                - stop: "Manual request takes priority."
+            - if:
+                - condition: "template"
+                  value_template: "{{ not is_state(cfg.plug,'on') }}"
+              then:
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_running"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confidence"
+                  data:
+                    option: "uncertain"
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_error"
+                  data:
+                    value: "Plug is not on. Recover after power is restored."
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Stopped safely; physical reference required"
+                - if:
+                    - condition: "template"
+                      value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                  then:
+                    - action: "input_select.select_option"
+                      target:
+                        entity_id: "input_select.den_fan_recovery"
+                      data:
+                        option: "failed"
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_in_progress"
+                - stop: "Plug is not on. Recover after power is restored."
+            - if:
+                - condition: "template"
+                  value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and states(cfg.power)|float < cfg.off_below }}"
+              then:
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_running"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confidence"
+                  data:
+                    option: "uncertain"
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_error"
+                  data:
+                    value: "Fan appears stopped. Recover before sending toggles."
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Stopped safely; physical reference required"
+                - if:
+                    - condition: "template"
+                      value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                  then:
+                    - action: "input_select.select_option"
+                      target:
+                        entity_id: "input_select.den_fan_recovery"
+                      data:
+                        option: "failed"
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_in_progress"
+                - stop: "Fan appears stopped. Recover before sending toggles."
+            - variables:
+                before: "{{ states('input_select.den_fan_confirmed_state') }}"
             - variables:
                 expected: "{{ before.split('_')[0] ~ '_' ~ speed_order[(speed_order.index(before.split('_')[1])+1)%3] }}"
-                sent_at: "{{ now().timestamp() }}"
-                deadline: "{{ now().timestamp() + cfg.feedback_timeout }}"
-            - action: "input_datetime.set_datetime"
+            - action: "input_boolean.turn_on"
               target:
-                entity_id: "input_datetime.den_fan_command_guard_until"
+                entity_id: "input_boolean.den_fan_command_in_progress"
+            - action: "input_select.select_option"
+              target:
+                entity_id: "input_select.den_fan_confidence"
               data:
-                timestamp: "{{ deadline + cfg.stable_seconds + 5 }}"
+                option: "inferred"
+            - action: "input_text.set_value"
+              target:
+                entity_id: "input_text.den_fan_error"
+              data:
+                value: "{{ 'Sending speed press toward ' ~ expected ~ '. If interrupted, confirm state or Recover.' }}"
+            - variables:
+                sent_at: "{{ now().timestamp() }}"
             - action: "remote.send_command"
               target:
-                entity_id: "remote.den_fan_remote"
+                entity_id: "remote.example_remote"
               data:
-                device: "Den Fan"
-                command: "speed_toggle"
+                device: "EXAMPLE_FAN"
+                command: "EXAMPLE_SPEED"
+                num_repeats: 1
+            - action: "input_select.select_option"
+              target:
+                entity_id: "input_select.den_fan_confirmed_state"
+              data:
+                option: "{{ expected }}"
+            - action: "input_datetime.set_datetime"
+              target:
+                entity_id: "input_datetime.den_fan_last_command_time"
+              data:
+                timestamp: "{{ now().timestamp() }}"
+            - delay:
+                seconds: 3
+            - variables:
+                deadline: "{{ now().timestamp()+cfg.feedback_timeout }}"
             - repeat:
                 sequence:
                   - delay:
                       seconds: 1
                 until:
                   - condition: "template"
-                    value_template: "{{ (is_number(states(cfg.power)) and expected in cfg.ranges and cfg.ranges[expected][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[expected][1] + cfg.range_tolerance and not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) and as_timestamp(states[cfg.power].last_updated,0) > sent_at and now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed, 0) >= cfg.stable_seconds) or now().timestamp() >= deadline }}"
+                    value_template: "{{ now().timestamp() >= deadline or ((is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance) and as_timestamp(states[cfg.power].last_reported,0) > sent_at) }}"
             - if:
                 - condition: "template"
-                  value_template: "{{ not (is_number(states(cfg.power)) and expected in cfg.ranges and cfg.ranges[expected][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[expected][1] + cfg.range_tolerance and not (is_number(states(cfg.power)) and before in cfg.ranges and cfg.ranges[before][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[before][1] + cfg.range_tolerance) and as_timestamp(states[cfg.power].last_updated,0) > sent_at and now().timestamp() - as_timestamp(states['sensor.den_fan_power_candidates'].last_changed, 0) >= cfg.stable_seconds) }}"
+                  value_template: "{{ not is_state(cfg.plug,'on') }}"
               then:
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_running"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confidence"
+                  data:
+                    option: "uncertain"
                 - action: "input_boolean.turn_on"
                   target:
                     entity_id: "input_boolean.den_fan_command_fault"
-                - action: "input_select.select_option"
-                  target:
-                    entity_id: "input_select.den_fan_confirmed_state"
-                  data:
-                    option: "unknown"
                 - action: "input_text.set_value"
                   target:
                     entity_id: "input_text.den_fan_error"
                   data:
-                    value: "{{ ('Unconfirmed ' ~ expected ~ ': ' ~ states(cfg.power) ~ ' W. Automatic retries paused; confirm the fan setting.')[:255] }}"
-                - stop: "{{ ('Unconfirmed ' ~ expected ~ ': ' ~ states(cfg.power) ~ ' W. Automatic retries paused; confirm the fan setting.')[:255] }}"
-            - action: "input_select.select_option"
+                    value: "Plug is not on. Recover after power is restored."
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Stopped safely; physical reference required"
+                - if:
+                    - condition: "template"
+                      value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                  then:
+                    - action: "input_select.select_option"
+                      target:
+                        entity_id: "input_select.den_fan_recovery"
+                      data:
+                        option: "failed"
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_in_progress"
+                - stop: "Plug is not on. Recover after power is restored."
+            - if:
+                - condition: "template"
+                  value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and states(cfg.power)|float < cfg.off_below }}"
+              then:
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_running"
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confidence"
+                  data:
+                    option: "uncertain"
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_error"
+                  data:
+                    value: "Fan appears stopped. Recover before sending toggles."
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Stopped safely; physical reference required"
+                - if:
+                    - condition: "template"
+                      value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                  then:
+                    - action: "input_select.select_option"
+                      target:
+                        entity_id: "input_select.den_fan_recovery"
+                      data:
+                        option: "failed"
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_in_progress"
+                - stop: "Fan appears stopped. Recover before sending toggles."
+            - if:
+                - condition: "template"
+                  value_template: "{{ (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and as_timestamp(states[cfg.power].last_reported,0) > sent_at and not (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance) }}"
+              then:
+                - action: "input_select.select_option"
+                  target:
+                    entity_id: "input_select.den_fan_confidence"
+                  data:
+                    option: "uncertain"
+                - action: "input_boolean.turn_on"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_fault"
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_error"
+                  data:
+                    value: "Wattage contradicts the last press after timeout. Sequence stopped; confirm or Recover."
+                - action: "input_text.set_value"
+                  target:
+                    entity_id: "input_text.den_fan_outcome"
+                  data:
+                    value: "Stopped safely; physical reference required"
+                - if:
+                    - condition: "template"
+                      value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+                  then:
+                    - action: "input_select.select_option"
+                      target:
+                        entity_id: "input_select.den_fan_recovery"
+                      data:
+                        option: "failed"
+                - action: "input_boolean.turn_off"
+                  target:
+                    entity_id: "input_boolean.den_fan_command_in_progress"
+                - stop: "Wattage contradicts the last press after timeout. Sequence stopped; confirm or Recover."
+            - action: "input_text.set_value"
               target:
-                entity_id: "input_select.den_fan_confirmed_state"
+                entity_id: "input_text.den_fan_outcome"
               data:
-                option: "{{ expected }}"
-      - if:
-          - condition: "template"
-            value_template: "{{ not (is_number(states(cfg.power)) and target in cfg.ranges and cfg.ranges[target][0] - cfg.range_tolerance <= states(cfg.power) | float <= cfg.ranges[target][1] + cfg.range_tolerance) }}"
-        then:
-          - action: "input_boolean.turn_on"
-            target:
-              entity_id: "input_boolean.den_fan_command_fault"
-          - action: "input_select.select_option"
-            target:
-              entity_id: "input_select.den_fan_confirmed_state"
-            data:
-              option: "unknown"
-          - action: "input_text.set_value"
-            target:
-              entity_id: "input_text.den_fan_error"
-            data:
-              value: "Final setting is not supported by current power."
-          - stop: "Final setting is not supported by current power."
-      - action: "input_datetime.set_datetime"
+                value: "{{ 'Expected ' ~ expected ~ '; power corroborates, delivery unproven' if (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) and (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance) and as_timestamp(states[cfg.power].last_reported,0) > sent_at else 'Expected ' ~ expected ~ '; fresh power unavailable, delivery unproven' }}"
+            - action: "input_boolean.turn_off"
+              target:
+                entity_id: "input_boolean.den_fan_command_in_progress"
+      - action: "input_boolean.turn_off"
         target:
-          entity_id: "input_datetime.den_fan_last_command_time"
-        data:
-          timestamp: "{{ now().timestamp() }}"
-      - action: "input_datetime.set_datetime"
+          entity_id: "input_boolean.den_fan_command_in_progress"
+      - action: "input_boolean.turn_off"
         target:
-          entity_id: "input_datetime.den_fan_command_guard_until"
-        data:
-          timestamp: "{{ now().timestamp()+cfg.stable_seconds+2 }}"
+          entity_id: "input_boolean.den_fan_command_fault"
       - action: "input_text.set_value"
         target:
           entity_id: "input_text.den_fan_error"
         data:
           value: ""
-      - action: "input_boolean.turn_off"
+      - if:
+          - condition: "template"
+            value_template: "{{ is_state('input_select.den_fan_recovery','in_progress') }}"
+        then:
+          - action: "input_select.select_option"
+            target:
+              entity_id: "input_select.den_fan_recovery"
+            data:
+              option: "complete"
+      - if:
+          - condition: "template"
+            value_template: "{{ event == 'recover' }}"
+        then:
+          - action: "input_boolean.turn_off"
+            target:
+              entity_id: "input_boolean.den_fan_auto_recovery_used"
+      - action: "input_text.set_value"
         target:
-          entity_id: "input_boolean.den_fan_command_fault"
+          entity_id: "input_text.den_fan_outcome"
+        data:
+          value: "{{ 'Expected ' ~ states('input_select.den_fan_confirmed_state') ~ '; ' ~ states('input_select.den_fan_confidence') ~ '. See wattage evidence; IR receipt is unproven.' }}"
   den_fan_confirm_state:
-    alias: "Den Fan - Confirm Physical Setting"
-    mode: "queued"
-    description: "Select the setting verified on the physical fan. Sends no remote commands; starts a manual hold."
+    alias: "Den Fan - Confirm Physical State"
+    mode: "parallel"
+    max: 10
     fields:
       setting:
         required: true
@@ -960,7 +1727,7 @@ script:
           - condition: "template"
             value_template: "{{ setting not in ['cool_low', 'cool_med', 'cool_high', 'exhaust_low', 'exhaust_med', 'exhaust_high', 'circulate_low', 'circulate_med', 'circulate_high'] }}"
         then:
-          - stop: "Invalid setting."
+          - stop: "Invalid physical setting."
       - action: "script.den_fan_set_state"
         data:
           event: "synchronize"
@@ -969,9 +1736,8 @@ script:
 automation:
   - id: "den_fan_continuous_control_v2"
     alias: "Den Fan - Continuous Control"
-    mode: "queued"
-    max: 3
-    max_exceeded: "silent"
+    mode: "parallel"
+    max: 5
     trace:
       stored_traces: 20
     triggers:
@@ -982,11 +1748,22 @@ automation:
         event: "start"
         id: "startup"
       - trigger: "state"
-        entity_id: "sensor.den_fan_power_candidates"
-        for:
-          seconds: 15
+        entity_id:
+          - "sensor.example_temperature"
+          - "sensor.example_humidity"
+        id: "observe"
+      - trigger: "time"
+        at: "input_datetime.den_fan_manual_until"
+        id: "evaluate"
+      - trigger: "state"
+        entity_id: "switch.example_fan_plug"
+        to: "off"
+        id: "power_lost"
+      - trigger: "state"
+        entity_id: "sensor.example_fan_power"
+        to: null
         id: "observe"
     actions:
       - action: "script.den_fan_set_state"
         data:
-          event: "{{ trigger.id | default('evaluate') }}"
+          event: "{{ trigger.id|default('evaluate') }}"

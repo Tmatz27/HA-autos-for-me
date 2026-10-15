@@ -1,0 +1,7 @@
+{
+  "name": "window-fan-card-tests",
+  "version": "1.7.0-dev",
+  "private": true,
+  "scripts": {"test": "node tests/card.test.cjs"},
+  "devDependencies": {"playwright": "1.62.1"}
+}

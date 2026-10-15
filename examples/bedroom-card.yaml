@@ -1,4 +1,0 @@
-type: "custom:window-fan-card"
-name: "Bedroom Window Fan"
-fan_package: "sensor.bedroom_fan_state"
-setup_mode: "package"
