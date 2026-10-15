@@ -17,7 +17,7 @@ def main():
         den_controller.dump(dehumidifier_controller.build())+'\n',encoding='utf-8',newline='\r\n')
     (ROOT/'examples'/'den-card.yaml').write_text(den_controller.dump({
         'type':'custom:window-fan-card','name':'Den Window Fan',
-        'fan_package':'sensor.den_fan_state','setup_mode':'package'})+'\n',encoding='utf-8',newline='\r\n')
+        'fan_package':'sensor.den_fan_state','setup_mode':'package'})+'\n',encoding='utf-8',newline='\n')
     print('Built generic den package, card configuration and unchanged shared dehumidifier.')
 
 if __name__=='__main__': main()
