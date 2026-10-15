@@ -52,8 +52,8 @@ TEST_SETTINGS=json.loads(Path(os.environ['DEN_TEST_CONFIG']).read_text()) if os.
 
 class Harness:
     """Small script executor with independent motor physics and delayed reports."""
-    def __init__(self,room,when='2025-01-01T12:00:00',mode='exhaust',speed='high'):
-        self.room=room; self.prefix=room+'_fan'; self.package=yaml.safe_load(build.dump(build.build(TEST_SETTINGS)))
+    def __init__(self,room,when='2025-01-01T12:00:00',mode='exhaust',speed='high',settings=None):
+        self.room=room; self.prefix=room+'_fan'; self.package=yaml.safe_load(build.dump(build.build(settings if settings is not None else TEST_SETTINGS)))
         self.script=self.package['script'][self.prefix+'_set_state']
         self.cfg=self.script['sequence'][0]['variables']['cfg']
         self.now=dt(when); self.states=States(); self.mode=mode; self.speed=speed
@@ -139,7 +139,10 @@ class Harness:
                     t=float(data['timestamp']); self.put(entity,datetime.fromtimestamp(t,TZ).strftime('%Y-%m-%d %H:%M:%S'),{'timestamp':t})
                 elif name=='remote.send_command':
                     if self.service_error: raise RuntimeError('BroadLink service unavailable')
-                    if not self.miss:
+                    if data['device']==self.cfg['led_device']:
+                        assert data['command'] in [self.cfg['led_on_command'],self.cfg['led_off_command']]
+                        if not self.miss: self.led_on=data['command']==self.cfg['led_on_command']
+                    elif not self.miss:
                         if data['command']==self.cfg['mode_command']: self.mode=build.MODES[(build.MODES.index(self.mode)+1)%3]
                         elif data['command']==self.cfg['speed_command']: self.speed=build.SPEEDS[(build.SPEEDS.index(self.speed)+1)%3]
                         elif data['command']==self.cfg['power_on_command']:
@@ -458,5 +461,48 @@ class Tests(unittest.TestCase):
         self.assertEqual(float(sample.state),45)
         self.assertEqual(sample.attributes['sampled_at'],h.now.isoformat())
 
+
+
+class LEDTests(unittest.TestCase):
+    def start(self):
+        settings={**(TEST_SETTINGS or {}),'led_device':'TEST_LED','led_on_command':'LED_ON','led_off_command':'LED_OFF'}
+        h=Harness('den',settings=settings)
+        h.run(event='synchronize',target_function='exhaust',target_speed='high')
+        h.calls.clear(); return h
+    def test_existing_led_switch_identity_and_exact_commands(self):
+        h=self.start(); switch=h.package['template'][1]['switch'][0]
+        self.assertEqual(switch['name'],'Den LED Strip'); self.assertEqual(switch['unique_id'],'den_led_strip')
+        before={k:v.state for k,v in h.states.data.items() if k.startswith('input_')}
+        h.execute(switch['turn_on'],{}); self.assertTrue(h.led_on)
+        h.execute(switch['turn_off'],{}); self.assertFalse(h.led_on)
+        self.assertEqual([(x[1],x[2]['device'],x[2]['command']) for x in h.remote_calls],
+            [(h.cfg['remote'],'TEST_LED','LED_ON'),(h.cfg['remote'],'TEST_LED','LED_OFF')])
+        self.assertEqual({k:v.state for k,v in h.states.data.items() if k.startswith('input_')},before)
+        self.assertNotIn('remote.send_command',json.dumps(switch))
+    def test_led_independent_of_fan_fault_and_missing_climate(self):
+        h=self.start(); h.sensor('temperature','unavailable'); h.sensor('humidity','unknown')
+        h.helper('input_boolean','command_fault','on'); h.helper('input_boolean','command_in_progress','on')
+        hold=h.states['input_datetime.den_fan_manual_until'].attributes['timestamp']
+        h.run(event='led_on'); self.assertTrue(h.led_on)
+        self.assertEqual(h.states('input_boolean.den_fan_command_fault'),'on')
+        self.assertEqual(h.states('input_boolean.den_fan_command_in_progress'),'on')
+        self.assertEqual(h.states['input_datetime.den_fan_manual_until'].attributes['timestamp'],hold)
+        self.assertEqual((h.mode,h.speed),('exhaust','high'))
+    def test_led_queues_behind_entire_recovery_sequence(self):
+        h=self.start(); fired=False
+        def during(name,entity,data):
+            nonlocal fired
+            if name=='switch.turn_off' and not fired:
+                fired=True; h.run(event='led_on')
+        h.after_action=during; h.run(event='recover',target_function='circulate',target_speed='high')
+        self.assertTrue(h.led_on); self.assertEqual((h.mode,h.speed),('circulate','high'))
+        self.assertEqual(h.remote_calls[-1][2]['device'],'TEST_LED')
+        self.assertTrue(all(x[2]['device']==h.cfg['device'] for x in h.remote_calls[:-1]))
+        self.assertEqual(h.states('input_select.den_fan_recovery'),'complete'); self.assertEqual(h.error,'')
+    def test_unconfigured_led_sends_no_command_or_manual_hold(self):
+        settings={**(TEST_SETTINGS or {}),'led_device':''}
+        h=Harness('den',settings=settings); h.run(event='led_on')
+        self.assertEqual(h.remote_calls,[]); self.assertEqual(len(h.package['template']),1)
+        self.assertEqual(h.states['input_datetime.den_fan_manual_until'].attributes.get('timestamp',0),0)
 
 if __name__=='__main__': unittest.main(verbosity=2)

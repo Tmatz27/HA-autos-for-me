@@ -1,4 +1,4 @@
-# Den fan 1.7.0-dev - GENERIC EXAMPLE, configure privately before installing.
+# Den fan 1.7.0 - GENERIC EXAMPLE, configure privately before installing.
 input_boolean:
   den_fan_command_fault:
     name: "Den Fan Command Fault"
@@ -117,7 +117,7 @@ template:
           status_sensor: "sensor.den_fan_control_status"
           temperature_sensor: "sensor.example_temperature"
           humidity_sensor: "sensor.example_humidity"
-          controller_version: "1.7.0-dev"
+          controller_version: "1.7.0"
           confidence: "{{ 'uncertain' if is_state('input_boolean.den_fan_command_in_progress','on') and not is_state('script.den_fan_executor','on') else states('input_select.den_fan_confidence') }}"
       - name: "Den Fan Control Status"
         unique_id: "den_fan_control_status"
@@ -132,7 +132,7 @@ template:
           confidence: "{{ 'uncertain' if is_state('input_boolean.den_fan_command_in_progress','on') and not is_state('script.den_fan_executor','on') else states('input_select.den_fan_confidence') }}"
           expected_state: "{{ states('input_select.den_fan_confirmed_state') }}"
           running: "{{ is_state('input_boolean.den_fan_running','on') }}"
-          evidence: "{% set cfg={'power': 'sensor.example_fan_power', 'plug': 'switch.example_fan_plug', 'remote': 'remote.example_remote', 'device': 'EXAMPLE_FAN', 'mode_command': 'EXAMPLE_MODE', 'speed_command': 'EXAMPLE_SPEED', 'power_on_command': 'EXAMPLE_ON', 'power_off_command': 'EXAMPLE_OFF', 'temperature': 'sensor.example_temperature', 'humidity': 'sensor.example_humidity', 'manual_minutes': 120, 'cool_at': 70, 'cool_stop': 68, 'max_rh': 65, 'heat_at': 78, 'heat_stop': 75, 'burst_minutes': 30, 'recovery_minutes': 10, 'rapid_rise_points': 8, 'off_seconds': 15, 'plug_delay': 3, 'startup_delay': 8, 'command_delay': 3, 'feedback_timeout': 30, 'power_stale_seconds': 120, 'off_below': 10, 'range_tolerance': 0.5, 'auto_recovery': False, 'ranges': {'cool_low': [46, 47], 'cool_med': [48, 50], 'cool_high': [50, 53], 'exhaust_low': [32, 33], 'exhaust_med': [34, 35], 'exhaust_high': [35, 38], 'circulate_low': [39, 40], 'circulate_med': [42, 43], 'circulate_high': [44, 46]}} %}{% set expected=states('input_select.den_fan_confirmed_state') %}{% if not (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) %}Power unavailable or stale; command history retained{% elif states(cfg.power)|float < cfg.off_below %}Fan appears stopped; recover or confirm physical state{% elif not (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance) %}Power conflicts with expected setting; inspect fan or recover{% elif '|' in states('sensor.den_fan_power_candidates') %}Overlapping power bands; expected setting retained{% else %}Power corroborates expected setting; IR delivery is not independently proven{% endif %}"
+          evidence: "{% set cfg={'power': 'sensor.example_fan_power', 'plug': 'switch.example_fan_plug', 'remote': 'remote.example_remote', 'device': 'EXAMPLE_FAN', 'mode_command': 'EXAMPLE_MODE', 'speed_command': 'EXAMPLE_SPEED', 'power_on_command': 'EXAMPLE_ON', 'power_off_command': 'EXAMPLE_OFF', 'temperature': 'sensor.example_temperature', 'humidity': 'sensor.example_humidity', 'manual_minutes': 120, 'cool_at': 70, 'cool_stop': 68, 'max_rh': 65, 'heat_at': 78, 'heat_stop': 75, 'burst_minutes': 30, 'recovery_minutes': 10, 'rapid_rise_points': 8, 'off_seconds': 15, 'plug_delay': 3, 'startup_delay': 8, 'command_delay': 3, 'feedback_timeout': 30, 'power_stale_seconds': 120, 'off_below': 10, 'range_tolerance': 0.5, 'auto_recovery': False, 'ranges': {'cool_low': [46, 47], 'cool_med': [48, 50], 'cool_high': [50, 53], 'exhaust_low': [32, 33], 'exhaust_med': [34, 35], 'exhaust_high': [35, 38], 'circulate_low': [39, 40], 'circulate_med': [42, 43], 'circulate_high': [44, 46]}, 'led_device': '', 'led_on_command': 'on', 'led_off_command': 'off'} %}{% set expected=states('input_select.den_fan_confirmed_state') %}{% if not (is_number(states(cfg.power)) and states(cfg.power)|float >= 0 and now().timestamp()-as_timestamp(states[cfg.power].last_reported,0) <= cfg.power_stale_seconds) %}Power unavailable or stale; command history retained{% elif states(cfg.power)|float < cfg.off_below %}Fan appears stopped; recover or confirm physical state{% elif not (expected in cfg.ranges and cfg.ranges[expected][0]-cfg.range_tolerance <= states(cfg.power)|float <= cfg.ranges[expected][1]+cfg.range_tolerance) %}Power conflicts with expected setting; inspect fan or recover{% elif '|' in states('sensor.den_fan_power_candidates') %}Overlapping power bands; expected setting retained{% else %}Power corroborates expected setting; IR delivery is not independently proven{% endif %}"
           last_outcome: "{{ states('input_text.den_fan_outcome') }}"
           recovery: "{{ 'failed' if is_state('input_boolean.den_fan_command_in_progress','on') and not is_state('script.den_fan_executor','on') and is_state('input_select.den_fan_recovery','in_progress') else states('input_select.den_fan_recovery') }}"
           requested_mode: "{{ states('input_select.den_fan_requested_mode') }}"
@@ -141,7 +141,7 @@ template:
           cycle_end_timestamp: "{{ (state_attr('input_datetime.den_fan_cycle_end', 'timestamp') | float(0)) }}"
           humidity_restart_limit: "{% set n=states('sensor.example_temperature') %}\n{% if is_number(n) %}\n{% set temp=n | float * 9/5+32 if state_attr('sensor.example_temperature','unit_of_measurement') == '°C' else n | float %}\n{{ (58 if temp <= 72 else 58+(temp-72) if temp <= 76 else 62+(temp-76)*1.5 if temp < 78 else 65) | round(1) }}\n{% else %}{{ none }}{% endif %}"
           humidity_rise_10m: "{{ states('sensor.example_humidity')|float - states('sensor.den_fan_humidity_min_10m')|float if is_number(states('sensor.example_humidity')) and is_number(states('sensor.den_fan_humidity_min_10m')) else none }}"
-          controller_version: "1.7.0-dev"
+          controller_version: "1.7.0"
 sensor:
   - platform: "statistics"
     name: "Den Fan Humidity Min 10m"
@@ -169,6 +169,8 @@ script:
               - "resume_auto"
               - "recover"
               - "synchronize"
+              - "led_on"
+              - "led_off"
       target_function:
         selector:
           select:
@@ -242,13 +244,16 @@ script:
               circulate_high:
                 - 44
                 - 46
+            led_device: ""
+            led_on_command: "on"
+            led_off_command: "off"
       - variables:
           event: "{{ event|default('evaluate') }}"
           requested: "{{ target_function|default('') }}"
           requested_speed: "{{ target_speed|default('') }}"
       - if:
           - condition: "template"
-            value_template: "{{ event not in ['evaluate','observe','startup','power_lost','manual','resume_auto','recover','synchronize'] }}"
+            value_template: "{{ event not in ['evaluate', 'observe', 'startup', 'power_lost', 'manual', 'resume_auto', 'recover', 'synchronize', 'led_on', 'led_off'] }}"
         then:
           - stop: "Invalid event."
       - if:
@@ -300,6 +305,8 @@ script:
               - "resume_auto"
               - "recover"
               - "synchronize"
+              - "led_on"
+              - "led_off"
       target_function:
         selector:
           select:
@@ -373,11 +380,33 @@ script:
               circulate_high:
                 - 44
                 - 46
+            led_device: ""
+            led_on_command: "on"
+            led_off_command: "off"
       - variables:
           event: "{{ event|default('evaluate') }}"
           requested: "{{ target_function|default('') }}"
           requested_speed: "{{ target_speed|default('') }}"
           now_ts: "{{ now().timestamp() }}"
+      - if:
+          - condition: "template"
+            value_template: "{{ event in ['led_on','led_off'] }}"
+        then:
+          - if:
+              - condition: "template"
+                value_template: "{{ cfg.led_device == '' }}"
+            then:
+              - stop: "LED control is not configured."
+          - action: "remote.send_command"
+            target:
+              entity_id: "remote.example_remote"
+            data:
+              device: ""
+              command: "{{ cfg.led_on_command if event == 'led_on' else cfg.led_off_command }}"
+              num_repeats: 1
+          - delay:
+              seconds: 3
+          - stop: "Room LED command sent; physical receipt is not confirmed."
       - if:
           - condition: "template"
             value_template: "{{ is_state('input_boolean.den_fan_command_in_progress','on') }}"

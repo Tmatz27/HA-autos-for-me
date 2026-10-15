@@ -1,0 +1,63 @@
+{
+  "power": "sensor.example_fan_power",
+  "plug": "switch.example_fan_plug",
+  "remote": "remote.example_remote",
+  "device": "EXAMPLE_FAN",
+  "mode_command": "EXAMPLE_MODE",
+  "speed_command": "EXAMPLE_SPEED",
+  "power_on_command": "EXAMPLE_ON",
+  "power_off_command": "EXAMPLE_OFF",
+  "temperature": "sensor.example_temperature",
+  "humidity": "sensor.example_humidity",
+  "manual_minutes": 120,
+  "off_seconds": 15,
+  "plug_delay": 3,
+  "startup_delay": 8,
+  "command_delay": 3,
+  "feedback_timeout": 30,
+  "power_stale_seconds": 120,
+  "off_below": 10,
+  "range_tolerance": 0.5,
+  "auto_recovery": false,
+  "ranges": {
+    "cool_low": [
+      46,
+      47
+    ],
+    "cool_med": [
+      48,
+      50
+    ],
+    "cool_high": [
+      50,
+      53
+    ],
+    "exhaust_low": [
+      32,
+      33
+    ],
+    "exhaust_med": [
+      34,
+      35
+    ],
+    "exhaust_high": [
+      35,
+      38
+    ],
+    "circulate_low": [
+      39,
+      40
+    ],
+    "circulate_med": [
+      42,
+      43
+    ],
+    "circulate_high": [
+      44,
+      46
+    ]
+  },
+  "led_device": "EXAMPLE_ROOM_LEDS",
+  "led_on_command": "on",
+  "led_off_command": "off"
+}

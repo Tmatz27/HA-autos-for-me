@@ -2,7 +2,7 @@
 
 A persistent state tracker, one serialized hardware executor, the unchanged v1.6.0 den climate policy, and a Lovelace card. The shared dehumidifier remains independent and unchanged.
 
-This branch is a development update, not a published HACS release. Public packages contain **generic examples**. Generate a private installation package using confirmed hardware mappings before installing.
+**Version 1.7.0** is distributed as a HACS dashboard-card release. Public packages contain **generic examples**. Generate a private installation package using confirmed hardware mappings before installing.
 
 ## Operation
 
@@ -28,7 +28,7 @@ The original `POLICY`, `HUMIDITY_LIMIT` and climate thresholds are frozen. Diffe
 
 - `den_controller.py`: configurable den package generator and frozen climate policy.
 - `build.py`: builds only the generic den example and independent shared dehumidifier.
-- `dist/window-fan-card.js`: the only supported card; requires the den package. Legacy standalone IR sending has been removed to prevent competing controllers.
+- `dist/window-fan-card.js`: the only supported card; requires the den package. Legacy standalone IR sending has been removed to prevent competing controllers. Optional room LED on/off controls retain the existing switch identity and share the same BroadLink queue.
 - `packages/`: generic public examples, not household configuration.
 - `examples/den-card.yaml`: complete dashboard card configuration.
 - [Installation and migration](docs/INSTALL.md): files to remove/replace, HACS/manual resource installation, first tests and rollback.
@@ -44,6 +44,10 @@ python den_controller.py --config /private/confirmed-fan.json --output /private/
 ```
 
 Keep private JSON/output outside this repository. `--config` requires all installation mappings, confirmed timings, startup/off commands, wattage settings, hold duration and explicit automatic-recovery choice; it rejects unknown keys and changes to frozen climate parameters. Names are case sensitive. The power-off name is retained in configuration for clarity and is not used in normal changes or reset recovery. A verified single power-toggle identifier may occupy both power-command fields.
+
+To include the room LEDs in the **same** package, supply `led_device`, `led_on_command` and `led_off_command` in private JSON. The `Den LED Strip` switch retains its name and `den_led_strip` unique ID. LED controls do not affect the fan's manual hold, fault or climate policy. Remove any separately installed duplicate LED template when installing the combined room package. See `examples/room-config.example.json` for generic configuration fields.
+
+HACS installs/updates `window-fan-card.js`; it does not install YAML packages. Update the card through HACS and replace the private complete YAML package separately. The release is tagged from the repair branch; main is not merged by publishing a release.
 
 Configure the shared dehumidifier separately using its existing generator. Install it once; this fan update requires no dehumidifier replacement.
 

@@ -1,5 +1,5 @@
 /** Den fan dashboard. All requests use the package executor. */
-const CARD_VERSION = "1.7.0-dev";
+const CARD_VERSION = "1.7.0";
 
 const MODES = ["cool", "exhaust", "circulate"];
 const SPEEDS = ["low", "med", "high"];

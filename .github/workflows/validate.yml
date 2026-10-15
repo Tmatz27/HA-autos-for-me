@@ -2,6 +2,7 @@ name: Controller and card validation
 on:
   push:
     branches: [main, 'repair/**']
+    tags: ['v*']
   pull_request:
 permissions:
   contents: read
@@ -38,3 +39,29 @@ jobs:
           --entrypoint python
           ghcr.io/home-assistant/home-assistant:${{ matrix.ha }}
           tests/check_home_assistant.py
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [software, home-assistant]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check release version matches the tag
+        run: >-
+          python -c "import os,den_controller; assert os.environ['GITHUB_REF_NAME'] == 'v'+den_controller.VERSION"
+      - name: Build public release files
+        run: python tools/build_release.py
+      - name: Publish HACS release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
+          --title "Window Fan Controller $GITHUB_REF_NAME"
+          --notes-file docs/RELEASE-v1.7.0.md --latest
+          dist/window-fan-card.js release/window-fan-control-*-examples.zip

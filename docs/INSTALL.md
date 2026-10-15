@@ -1,6 +1,6 @@
 # Installation, migration and rollback
 
-Do not install the public generic example unchanged. Use the privately generated package after entity names, learned identifiers, calibration and timing have been confirmed. This development branch does not deploy anything automatically and must not be merged or released without approval.
+Do not install the public generic example unchanged. Use the privately generated package after entity names, learned identifiers, calibration and timing have been confirmed. The v1.7.0 HACS release updates the card; the customized YAML package must be replaced separately. Publishing a release does not merge main or deploy to your instance.
 
 ## 1. Back up and stop duplicate control
 
@@ -9,7 +9,7 @@ Do not install the public generic example unchanged. Use the privately generated
 3. Remove `window_fan_bedroom.yaml` from the loaded packages directory. Also remove any separately copied bedroom template/statistics sensors, bedtime/TV automations, wattage helpers, manual/sleep-lock scripts and bedroom dashboard examples. Removing the file only removes YAML-defined entities after reload/restart; UI-created duplicates must be disabled/deleted separately. Retire old bedroom cards and any direct remote dashboard controls.
 4. Remove the OLD den package file; install exactly one replacement `window_fan_den.yaml`. Do not add the replacement under a second filename. Keep `shared_dehumidifier.yaml` as installed; its behavior and source are unchanged.
 5. The new den package retains the continuous-control automation ID and important state/deadline helper IDs. Old `den_fan_apply_state`, `den_fan_boot_pending`, and `den_fan_command_guard_until` are retired. After restart they must not be active from another package or UI copy. Delete orphaned entities from the registry only after confirming which files own them. Do not delete persistent history helpers during a normal upgrade.
-6. Check for unrelated template switches embedded in your old fan YAML. Preserve those in their own package before replacing the old file. A private migration can extract an existing LED switch unchanged; do not install a duplicate copy.
+6. The combined room package can retain the old Den LED Strip switch using private `led_device`, `led_on_command` and `led_off_command` settings. Its original name and unique ID are preserved. If you temporarily installed `existing_den_led.yaml` separately, remove that extra definition when installing the combined package. Keep one LED switch definition. Preserve any other unrelated controls that are not present in the replacement before removing their old definitions.
 
 ## 2. Put the replacement files in place
 
@@ -22,18 +22,18 @@ homeassistant:
 
 Copy the private complete file to `/config/packages/window_fan_den.yaml`. Check that every occurrence of the external hardware entities matches the confirmed private config; the generator propagates them into policy inputs, sampling/statistics, display links, triggers and actions. Never edit only the embedded `cfg` and leave template references unchanged.
 
-For this unmerged branch, install the supplied card manually at `/config/www/window-fan-card.js`. In **Settings → Dashboards → Resources** (enable Advanced Mode if needed), keep exactly one resource loading this card:
+Open the repository in HACS and update/redownload **v1.7.0**. Keep the actual HACS JavaScript-module resource URL shown by your installation and hard-refresh the browser. If you temporarily added a manual `/local/window-fan-card.js` resource, remove that duplicate resource when returning to the HACS copy. Two URLs defining the same custom element cannot coexist. The filename in `hacs.json` and release asset remains `window-fan-card.js`.
+
+HACS updates the dashboard card; it does **not** install, merge or replace the YAML room package. Copy your privately customized combined YAML as described above. The public release examples contain generic mappings.
+
+For manual card installation instead, copy the supplied card to `/config/www/window-fan-card.js`, keep just one resource, and use:
 
 ```yaml
-url: /local/window-fan-card.js?v=den-state-first-REPLACE_WITH_COMMIT
+url: /local/window-fan-card.js?v=1.7.0
 type: module
 ```
 
-The resource editor can also take the URL and JavaScript module type as separate fields. Replace the commit suffix on subsequent updates to avoid the cached file.
-
-Temporarily remove/disable the old resource that loads the HACS copy or another `/local/` copy of this card. Two resource URLs defining the same custom element cannot coexist. HACS can remain installed, but its current main/release download does not contain an unmerged branch. The existing `hacs.json`, `dist/window-fan-card.js` path and normal HACS custom-repository method are preserved for a later approved update. Do not create a release to install this branch.
-
-After an approved release, use HACS Redownload/update and restore the actual HACS resource URL shown by your installation; keep just that one resource and hard-refresh. Do not guess its folder path. For manual installation, retain `/local/window-fan-card.js` and increment the query suffix when replacing the file.
+Increment the URL version when replacing a manual copy so an old cached file is not reused. For HACS, use its managed resource and update flow; do not guess or create a second HACS folder path.
 
 Complete dashboard card:
 
@@ -50,7 +50,7 @@ The package links power, temperature, humidity and status entities automatically
 
 1. Run **Developer tools → YAML → Check configuration** (called **Tools** in some newer versions), or `ha core check` on Home Assistant OS. Resolve every configuration error before restarting. The repository's syntax/schema checks do not certify your whole installation.
 2. Restart Home Assistant once. Reloading just automations does not load all new helpers/template/statistics entities or remove all retired ones.
-3. Hard-refresh the dashboard or fully close/reopen the mobile frontend. If necessary clear its frontend cache. The browser console should show `Window Fan Card 1.7.0-dev`; use the Network panel to verify the new resource URL/content.
+3. Hard-refresh the dashboard or fully close/reopen the mobile frontend. If necessary clear its frontend cache. The browser console should show `Window Fan Card 1.7.0`; use the Network panel to verify the new resource URL/content.
 4. Inspect **States**. Expect `sensor.den_fan_state`, `sensor.den_fan_power_candidates`, `sensor.den_fan_control_status`, `sensor.den_fan_humidity_sample`, `sensor.den_fan_humidity_min_10m`, `script.den_fan_set_state`, `script.den_fan_executor`, and `script.den_fan_confirm_state`. Expect the configured real power/plug/remote/climate entities to exist with appropriate readings/units.
 5. Check helpers for expected state, confidence, running, command fault/in-progress, Auto recovery used, requested/manual mode/speed, recovery, policy cycle, manual/cycle deadlines and last-command time, reason/error/outcome. Template entity IDs must not have an unexpected `_2` suffix. Resolve duplicate registry entries and old definitions before proceeding.
 6. Keep the den automatic automation disabled for first physical checks. Manual card requests work while it is disabled. A fresh installation starts unknown; a migrated reference may be restored as inferred. Verify it physically before toggling.

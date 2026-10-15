@@ -2,7 +2,7 @@
 
 ## One writer and persistent history
 
-`script.den_fan_set_state` admits requests and reserves manual hold immediately. It performs no hardware operations. It synchronously calls `script.den_fan_executor`, a queued script that exclusively sends fan IR and changes the plug. `script.den_fan_confirm_state` is a convenience wrapper that also enters the same queue. One automation observes sensors and schedules climate evaluation. Do not call the executor directly; use the request service or card.
+`script.den_fan_set_state` admits requests and reserves manual hold immediately. It performs no hardware operations. It synchronously calls `script.den_fan_executor`, a queued script that exclusively sends room IR (fan and optional LEDs) and changes the fan plug. `script.den_fan_confirm_state` is a convenience wrapper that also enters the same queue. One automation observes sensors and schedules climate evaluation. Do not call the executor directly; use the request service or card.
 
 The executor recomputes Auto after entering the queue. It checks for a newly reserved manual hold before each automatic toggle, and yields between presses without losing completed history. Manual requests wait for the current bounded command/recovery boundary; no requests interleave plug/IR sequences. Repeating an already-satisfied target sends no further toggles. Requests rejected because the finite queue is full are logged by Home Assistant; the package does not automatically replay them.
 
@@ -38,6 +38,7 @@ Private JSON keys (public values in `DEFAULTS` are examples):
 | `ranges` | All nine measured `[lower, upper]` ranges; overlap is valid |
 | `range_tolerance` | Band margin, default 0.5 W |
 | `auto_recovery` | Boolean; default false, one persisted attempt if enabled |
+| `led_device`, `led_on_command`, `led_off_command` | Optional exact learned LED group/on/off names; empty group disables the LED switch |
 
 No climate thresholds/timers may be changed by this update. They remain the v1.6 values in source. Configuration is emitted throughout templates, statistics sampling, dashboard links, trigger IDs and action targets. Edit private JSON and regenerate; do not hand-replace a few occurrences in YAML.
 
@@ -50,3 +51,9 @@ The card uses `script.turn_on` only to admit the request promptly, with `entity_
 ## Shared dehumidifier
 
 `dehumidifier_controller.py` and `packages/shared_dehumidifier.yaml` are unchanged. The independent owner uses 50% at night and 60% by day according to `sun.sun`, checks every five minutes and on relevant changes, warns once at 75% tank level and blocks restart commands when full/invalid. Native hardware retains compressor/fan protection. Configure its humidity, tank, device, mode and supported target range using its existing private generator. No fan request writes dehumidifier settings.
+
+## Room LED controls
+
+When `led_device` is configured, the same package includes the existing **Den LED Strip** switch (`unique_id: den_led_strip`). Its on/off actions call the request script with `led_on` / `led_off`; those commands wait on the same queued executor as the fan. They do not require climate data or a fan-state reference, and they do not reset or extend the fan's manual hold or clear a fan fault. LED commands never interleave a fan recovery or toggle sequence. The switch retains the prior optimistic behavior because the LEDs provide no independent state feedback. Remote service errors are available in the executor trace; a returned call is not physical confirmation.
+
+Use the combined package as the single owner of this switch. Remove a temporarily extracted separate LED package before installing it, avoiding duplicate definitions with the same unique ID.

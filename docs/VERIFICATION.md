@@ -1,4 +1,4 @@
-# Verification report — development branch
+# Verification report — v1.7.0
 
 ## Root causes in v1.6.0
 
@@ -19,7 +19,7 @@ Retired bedroom package/example/template and generator/test paths are removed. D
 
 ## Validation status
 
-Validated code commit: `ca1933165866cd719bdcb9e28e12343805a57e5e`. [Successful CI run](https://github.com/Tmatz27/HA-autos-for-me/actions/runs/38687436872).
+Previous fan-only validation baseline: `ca1933165866cd719bdcb9e28e12343805a57e5e`. [Successful CI run](https://github.com/Tmatz27/HA-autos-for-me/actions/runs/38687436872).
 
 - **52 Python tests passed**, covering generated actions, differential policy, build/mapping invariants and the unchanged dehumidifier.
 - **Chromium card tests passed** locally in installed Chrome and in Linux CI.
@@ -44,4 +44,10 @@ Browser coverage: rendered mode/speed buttons, nine shared states, unavailable c
 - Verify all nine physical settings, untouched-axis behavior, first manual command, hold restart/expiry, Resume Auto, unavailable climate manual control, plug OFF→ON→startup command, failed-start safe stop, and restart interruption on the user's fan. See INSTALL.md.
 - Configuration schema checks cannot certify the existing household's complete YAML, resource cache or duplicate controllers. Run the installation configuration check and observe traces before enabling Auto.
 
-No merge, release or deployment is authorized by this report.
+The user subsequently authorized the v1.7.0 release and restoration of the room LEDs. Release validation also runs the extended LED tests and schema checks before publication. No main merge or Home Assistant deployment is performed by publishing the release.
+
+## Room LED restoration and release
+
+The optional LED template switch is generated inside the room package again, with its original name/unique ID and privately supplied learned on/off group/commands. Its actions enter the same executor; no second BroadLink sender was added. LED commands bypass fan-state/climate prerequisites and leave all fan state/hold/fault helpers unchanged. Four new tests cover exact switch/command wiring, missing-climate/fan-fault independence, queueing behind the full recovery sequence and the disabled-LED configuration.
+
+The extended **56-test Python suite passed locally**, including the unchanged 6,806-scenario climate comparison. The HACS release workflow repeats this suite, browser tests, generated consistency and the official Home Assistant checks with LED support enabled before it creates a release. Release bundles use an explicit public-file allowlist and exclude private configurations and customized room YAML.

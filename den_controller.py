@@ -9,7 +9,7 @@ import json
 import math
 import re
 
-VERSION = '1.7.0-dev'
+VERSION = '1.7.0'
 MODES = ['cool', 'exhaust', 'circulate']
 SPEEDS = ['low', 'med', 'high']
 STATES = [f'{m}_{s}' for m in MODES for s in SPEEDS]
@@ -24,7 +24,7 @@ DEFAULTS = dict(power='sensor.example_fan_power', plug='switch.example_fan_plug'
     burst_minutes=30, recovery_minutes=10, rapid_rise_points=8,
     off_seconds=15, plug_delay=3, startup_delay=8, command_delay=3,
     feedback_timeout=30, power_stale_seconds=120, off_below=10, range_tolerance=0.5,
-    auto_recovery=False, ranges=RANGES)
+    auto_recovery=False, ranges=RANGES, led_device='', led_on_command='on', led_off_command='off')
 CLIMATE_KEYS = ('cool_at','cool_stop','max_rh','heat_at','heat_stop','burst_minutes',
                 'recovery_minutes','rapid_rise_points')
 
@@ -69,6 +69,10 @@ def validate(settings,private=False):
         if not isinstance(cfg[key],str) or not re.fullmatch(domain+r'\.[a-z0-9_]+',cfg[key]): raise ValueError('Invalid entity: '+key)
     for key in ['device','mode_command','speed_command','power_on_command','power_off_command']:
         if not isinstance(cfg[key],str) or not cfg[key].strip(): raise ValueError('Required learned name: '+key)
+    if not isinstance(cfg['led_device'],str): raise ValueError('led_device must be a string')
+    if cfg['led_device']:
+        for key in ['led_on_command','led_off_command']:
+            if not isinstance(cfg[key],str) or not cfg[key].strip(): raise ValueError('Required learned name: '+key)
     for key in ['manual_minutes','off_seconds','plug_delay','startup_delay','command_delay','feedback_timeout','power_stale_seconds','off_below','range_tolerance']:
         value=cfg[key]
         if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or value <= 0:
@@ -175,11 +179,12 @@ def build(settings=None):
     # Parallel admission accepts manual ownership immediately, even while Auto is
     # waiting on feedback. The queued executor owns ALL helpers describing state
     # and ALL plug/IR actions. No script.turn_on fire-and-forget hardware calls.
-    fields={'event':{'selector':{'select':{'options':['evaluate','observe','startup','power_lost','manual','resume_auto','recover','synchronize']}}},
+    events=['evaluate','observe','startup','power_lost','manual','resume_auto','recover','synchronize','led_on','led_off']
+    fields={'event':{'selector':{'select':{'options':events}}},
         'target_function':{'selector':{'select':{'options':MODES}}},'target_speed':{'selector':{'select':{'options':SPEEDS}}}}
     admission=[v(cfg=cfg),v(event=t("event|default('evaluate')"),
         requested=t("target_function|default('')"),requested_speed=t("target_speed|default('')")),
-        iff("event not in ['evaluate','observe','startup','power_lost','manual','resume_auto','recover','synchronize']",[halt('Invalid event.')]),
+        iff('event not in '+repr(events),[halt('Invalid event.')]),
         iff("requested not in ['', 'cool','exhaust','circulate'] or requested_speed not in ['', 'low','med','high']",[halt('Invalid setting.')]),
         iff("event == 'manual' and requested == '' and requested_speed == ''",[halt('Select a mode or speed.')]),
         iff("event == 'synchronize' and (requested == '' or requested_speed == '')",[halt('Select both physical axes.')]),
@@ -189,6 +194,13 @@ def build(settings=None):
 
     executor=[v(cfg=cfg),v(event=t("event|default('evaluate')"),requested=t("target_function|default('')"),
         requested_speed=t("target_speed|default('')"),now_ts=t('now().timestamp()')),
+        # Room LED controls use the same transmitter queue but do not change
+        # fan history, faults, climate decisions or the fan's manual hold.
+        iff("event in ['led_on','led_off']",[
+            iff("cfg.led_device == ''",[halt('LED control is not configured.')]),
+            a('remote.send_command',cfg['remote'],{'device':cfg['led_device'],
+                'command':t("cfg.led_on_command if event == 'led_on' else cfg.led_off_command"),'num_repeats':1}),
+            delay(cfg['command_delay']),halt('Room LED command sent; physical receipt is not confirmed.')]),
         # A persisted intent is set before each side effect. A service exception
         # or restart cannot silently authorize another sequence of toggles.
         iff("is_state('input_boolean.den_fan_command_in_progress','on')",[
@@ -316,6 +328,12 @@ def build(settings=None):
             {'trigger':'state','entity_id':cfg['plug'],'to':'off','id':'power_lost'},
             {'trigger':'state','entity_id':cfg['power'],'to':None,'id':'observe'}],
         'actions':[a('script.den_fan_set_state',data={'event':t("trigger.id|default('evaluate')")})]}]
+    if cfg['led_device']:
+        # Retain the existing name/unique ID so existing LED dashboard controls
+        # continue to use the same switch when the room package is replaced.
+        package['template'].append({'switch':[{'name':'Den LED Strip','unique_id':'den_led_strip',
+            'turn_on':[a('script.den_fan_set_state',data={'event':'led_on'})],
+            'turn_off':[a('script.den_fan_set_state',data={'event':'led_off'})]}]})
     return package
 
 HUMIDITY_LIMIT="""{% set n=states('TEMP_ENTITY') %}
