@@ -19,7 +19,15 @@ Retired bedroom package/example/template and generator/test paths are removed. D
 
 ## Validation status
 
-Local Python generated-action scenarios and policy differential tests, dehumidifier regressions, real Chromium card tests and generated YAML/Jinja validation are provided. Results are recorded in the private delivery report and the PR checks; this document does not treat an unexecuted check as passed. CI uses Home Assistant's own configuration checker on complete generated packages for the minimum supported and current pinned releases. It does not connect to a household instance.
+Validated code commit: `ca1933165866cd719bdcb9e28e12343805a57e5e`. [Successful CI run](https://github.com/Tmatz27/HA-autos-for-me/actions/runs/38687436872).
+
+- **52 Python tests passed**, covering generated actions, differential policy, build/mapping invariants and the unchanged dehumidifier.
+- **Chromium card tests passed** locally in installed Chrome and in Linux CI.
+- Generated YAML/Jinja checks and generated-file consistency passed.
+- Home Assistant's own configuration checker passed using official **2024.10.4** and **2026.10.1** images, with generic complete den and shared-dehumidifier packages. The containers had network disabled and did not contact household equipment.
+- The independent dehumidifier source and generated package have no diff from v1.6.0.
+
+Initial CI setup issues (platform line endings and pip's resolution of old-release dependencies) were corrected before the successful run. No runtime or physical validation is claimed from schema checks. Installation-specific output requires separate confirmed settings and the user's full-instance configuration check.
 
 Policy differential coverage: **6,806 identical-input comparisons** of mode, cycle, deadline and full reason, plus the original detailed climate scenarios (dynamic thresholds, ordinary cooling/termination, strict >8 rise guard, prolonged drying, heat latch/exemptions, exit and recovery). Manual hold/expiry/resume and sensor availability are separately exercised through generated actions.
 
